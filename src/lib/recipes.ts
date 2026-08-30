@@ -539,6 +539,42 @@ export const RECIPES: RecipeTemplate[] = [
       "Top with the eggs, a splash of soy or sriracha, and plenty of pepper.",
     ],
   }),
+  R({
+    id: "steak-peas",
+    name: "Pan steak with buttery peas",
+    effort: "normal",
+    baseMinutes: 22,
+    core: ["steak", "pea"],
+    bonus: ["potato", "onion", "mushroom", "gravy", "garlic", "cheese", "rice", "horseradish"],
+    staples: ["oil", "butter", "salt", "pepper"],
+    blurb: "Cook the steak properly and the sides can be dead simple.",
+    steps: [
+      "Take the steak out of the fridge, pat it dry and salt both sides generously.",
+      "Get a heavy pan smoking hot with a little oil. Lay the steak in and don't touch it for 2–3 minutes.",
+      "Flip once, add a knob of butter and any garlic, and spoon the foaming butter over for another 2–3 minutes.",
+      "Rest the steak on a warm plate for at least 5 minutes — this is not optional.",
+      "Meanwhile, simmer the peas 3 minutes, drain, then crush lightly with butter, salt and pepper.",
+      "Make up the gravy with the pan juices stirred in, slice the steak across the grain and serve.",
+    ],
+  }),
+  R({
+    id: "chicken-pea-fry",
+    name: "Chicken and pea skillet",
+    effort: "lazy",
+    baseMinutes: 20,
+    core: ["chicken", "pea"],
+    bonus: ["cream cheese", "onion", "rice", "pasta", "garlic", "cheese", "stock", "curry powder"],
+    staples: ["oil", "salt", "pepper"],
+    blurb: "Odds and ends of chicken plus frozen peas — a full dinner in one pan.",
+    steps: [
+      "Cut the chicken into small even pieces and season with salt and pepper.",
+      "Brown it in a hot oiled pan for 5–6 minutes without crowding the pan.",
+      "Add the onion and garlic and cook 2 minutes until fragrant.",
+      "Stir in the cream cheese with a splash of water or stock to make a loose sauce.",
+      "Tip in the frozen peas straight from the bag and simmer 4–5 minutes until the chicken is cooked through (75°C).",
+      "Taste, season again, and serve over rice or pasta.",
+    ],
+  }),
 ];
 
 const EFFORT_ORDER: Record<Effort, number> = { lazy: 0, normal: 1, keen: 2 };
