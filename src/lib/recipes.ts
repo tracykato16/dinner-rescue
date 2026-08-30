@@ -415,7 +415,7 @@ export function generateSuggestions(input: RescueInput): Suggestion[] {
 
   const scored = RECIPES.map((recipe) => {
     const all = [...recipe.core, ...recipe.bonus];
-    const used = all.filter((item) => matches(have, item));
+    const used = have.filter((h) => all.some((item) => item.includes(h) || h.includes(item)));
     const missing = recipe.core.filter((item) => !matches(have, item));
 
     let score = 0;
@@ -447,7 +447,7 @@ export function generateSuggestions(input: RescueInput): Suggestion[] {
       picked.push({
         recipe,
         score: 0,
-        used: all.filter((item) => matches(have, item)),
+        used: have.filter((h) => all.some((item) => item.includes(h) || h.includes(item))),
         missing: recipe.core.filter((item) => !matches(have, item)),
         minutes: recipe.baseMinutes,
         servings,
