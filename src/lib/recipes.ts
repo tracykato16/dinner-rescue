@@ -124,6 +124,16 @@ const ALIASES: Record<string, string> = {
   "self raising flour": "flour",
   "cup a soup": "soup mix",
   "creamy bacon pasta": "pasta side",
+  steak: "steak",
+  steaks: "steak",
+  "rump steak": "steak",
+  "porterhouse": "steak",
+  "scotch fillet": "steak",
+  "chicken bits": "chicken",
+  "chicken pieces": "chicken",
+  "frozen pea": "pea",
+  "gravy mix": "gravy",
+  gravy: "gravy",
 };
 
 export function normalise(raw: string): string {
