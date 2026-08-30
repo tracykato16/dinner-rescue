@@ -90,8 +90,10 @@ const ALIASES: Record<string, string> = {
 
 export function normalise(raw: string): string {
   const s = raw.trim().toLowerCase().replace(/\s+/g, " ").replace(/\.$/, "");
-  return ALIASES[s] ?? (s.endsWith("s") && ALIASES[s.slice(0, -1)] ? ALIASES[s.slice(0, -1)] : s);
+  const singular = s.endsWith("s") ? s.slice(0, -1) : s;
+  return ALIASES[s] ?? ALIASES[singular] ?? s;
 }
+
 
 export function parseIngredients(text: string): string[] {
   return Array.from(
