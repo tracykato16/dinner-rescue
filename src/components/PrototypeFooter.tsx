@@ -11,7 +11,7 @@ export function PrototypeFooter() {
         to="/tester-results"
         className="mt-3 inline-block text-[11px] text-muted-foreground/70 underline underline-offset-4 hover:text-foreground"
       >
-        ·
+        tester results
       </Link>
     </footer>
   );
