@@ -228,7 +228,7 @@ export function parseIngredients(text: string): string[] {
     .replace(/\b(um+|uh+|erm+|hmm+)\b/gi, " ")
     .replace(/\b(i'?ve got|i have got|i have|we'?ve got|i got)\b/gi, ",");
 
-  const parts = cleaned.split(/[,;\n\u2022\/]|\band\b|\bplus\b|\balso\b|\bas well as\b|\bthen\b|\+/gi);
+  const parts = cleaned.split(/[,;.\n\u2022\/]|\band\b|\bplus\b|\balso\b|\bas well as\b|\bthen\b|\+/gi);
 
   const out: string[] = [];
   for (const part of parts) {
