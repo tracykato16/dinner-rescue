@@ -1,16 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Camera,
   ChefHat,
   Clock,
   HelpCircle,
+  Mic,
+  Plus,
   ShoppingCart,
   Sparkles,
+  Square,
+  Trash2,
   Users,
   Utensils,
   Check,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -25,6 +30,8 @@ import {
 } from "@/lib/recipes";
 import { findSubstitute } from "@/lib/substitutions";
 import { recordFeedback, recordSelection, recordSession } from "@/lib/tester-store";
+import { clearDraft, readDraft, writeDraft } from "@/lib/draft-store";
+import { useSpeechInput } from "@/hooks/useSpeechInput";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -33,7 +40,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Tell Dinner Rescue what's in your fridge, freezer or pantry and get three dinners tonight — no extra trip to the shops.",
+          "Tell Dinner Rescue what's in your fridge, freezer or pantry — speak it or type it — and get three dinners tonight with no extra trip to the shops.",
       },
       { property: "og:title", content: "Dinner Rescue — Cook with what you've already got" },
       {
@@ -41,12 +48,14 @@ export const Route = createFileRoute("/")({
         content:
           "Three dinner ideas from the ingredients you already have. Built for weeknights when the shops are the last place you want to be.",
       },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
   component: DinnerRescue,
 });
 
-type Step = "welcome" | "ingredients" | "details" | "results" | "cook" | "feedback";
+type Step = "welcome" | "capture" | "confirm" | "results" | "cook" | "feedback";
 
 const EFFORTS: { value: Effort; label: string; hint: string }[] = [
   { value: "lazy", label: "Can't be bothered", hint: "Under 20 minutes, one pan" },
@@ -64,28 +73,94 @@ const FEEDBACK_TAGS = [
 function DinnerRescue() {
   const [step, setStep] = useState<Step>("welcome");
   const [raw, setRaw] = useState("");
+  const [removed, setRemoved] = useState<string[]>([]);
+  const [extra, setExtra] = useState("");
   const [people, setPeople] = useState("2");
   const [effort, setEffort] = useState<Effort>("normal");
   const [avoid, setAvoid] = useState("");
   const [useUp, setUseUp] = useState("");
+  const [showOptional, setShowOptional] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [generating, setGenerating] = useState(false);
   const [chosen, setChosen] = useState<Suggestion | null>(null);
   const [lackQuery, setLackQuery] = useState("");
   const [swaps, setSwaps] = useState<{ item: string; advice: string }[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [comment, setComment] = useState("");
   const [done, setDone] = useState(false);
+  const [restored, setRestored] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
 
-  const ingredients = useMemo(() => parseIngredients(raw), [raw]);
+  // Restore any draft from a previous visit / accidental refresh.
+  useEffect(() => {
+    const draft = readDraft();
+    setHydrated(true);
+    if (!draft.raw.trim()) return;
+    setRaw(draft.raw);
+    setRemoved(draft.removed ?? []);
+    setPeople(draft.people || "2");
+    setEffort((draft.effort as Effort) || "normal");
+    setAvoid(draft.avoid ?? "");
+    setUseUp(draft.useUp ?? "");
+    setRestored(true);
+  }, []);
+
+  // Keep the draft saved continuously — a long spoken list must never vanish.
+  useEffect(() => {
+    if (!hydrated) return;
+    writeDraft({ raw, removed, people, effort, avoid, useUp });
+  }, [hydrated, raw, removed, people, effort, avoid, useUp]);
+
+  const ingredients = useMemo(
+    () => parseIngredients(raw).filter((i) => !removed.includes(i)),
+    [raw, removed],
+  );
+
+  const appendSpeech = useCallback((text: string) => {
+    setRaw((prev) => (prev.trim() ? `${prev.replace(/\s*$/, "")}, ${text}` : text));
+  }, []);
+
+  const speech = useSpeechInput(appendSpeech);
 
   function start() {
     recordSession();
-    setStep("ingredients");
+    setStep("capture");
   }
 
-  function rescue() {
-    setSuggestions(generateSuggestions({ ingredients, people, effort, avoid, useUp }));
+  function toConfirm() {
+    if (speech.listening) speech.stop();
+    setStep("confirm");
+  }
+
+  const rescue = useCallback(() => {
+    const started = performance.now();
+    setGenerating(true);
+    const next = generateSuggestions({ ingredients, people, effort, avoid, useUp });
+    setSuggestions(next);
     setStep("results");
+    // Parsing is local and instant; only show progress if it ever isn't.
+    if (performance.now() - started > 500) {
+      setTimeout(() => setGenerating(false), 0);
+    } else {
+      setGenerating(false);
+    }
+  }, [ingredients, people, effort, avoid, useUp]);
+
+  function addExtra() {
+    const text = extra.trim();
+    if (!text) return;
+    const parsed = parseIngredients(text);
+    setRemoved((prev) => prev.filter((r) => !parsed.includes(r)));
+    setRaw((prev) => (prev.trim() ? `${prev.replace(/\s*$/, "")}, ${text}` : text));
+    setExtra("");
+  }
+
+  function clearList() {
+    setRaw("");
+    setRemoved([]);
+    setExtra("");
+    setRestored(false);
+    clearDraft();
   }
 
   function choose(s: Suggestion) {
@@ -125,9 +200,15 @@ function DinnerRescue() {
   return (
     <div className="page-warm flex min-h-screen flex-col">
       <main className="mx-auto w-full max-w-xl flex-1 px-5 pb-4 pt-6">
-        {step === "welcome" && <Welcome onStart={start} />}
+        {step === "welcome" && (
+          <Welcome
+            onStart={start}
+            resumeCount={restored ? ingredients.length : 0}
+            onResume={() => setStep("confirm")}
+          />
+        )}
 
-        {step === "ingredients" && (
+        {step === "capture" && (
           <Screen
             title="What have you got?"
             onBack={() => setStep("welcome")}
@@ -136,30 +217,72 @@ function DinnerRescue() {
             <label htmlFor="ing" className="block text-base font-medium">
               Tell me what you've got in the fridge, freezer or pantry.
             </label>
+
+            {speech.supported ? (
+              <div className="mt-3">
+                {speech.listening ? (
+                  <Button
+                    size="xl"
+                    variant="warm"
+                    className="w-full animate-pulse"
+                    onClick={speech.stop}
+                  >
+                    <Square aria-hidden /> Stop — I'm listening…
+                  </Button>
+                ) : (
+                  <Button size="xl" variant="hero" className="w-full" onClick={speech.start}>
+                    <Mic aria-hidden /> Speak my ingredients
+                  </Button>
+                )}
+                <p className="mt-2 text-sm text-muted-foreground" aria-live="polite">
+                  {speech.listening
+                    ? speech.interim
+                      ? `Hearing: ${speech.interim}`
+                      : "Go for it — just rattle them off. Tap stop when you're done."
+                    : "Say them out loud, or type below. Nothing's lost either way."}
+                </p>
+              </div>
+            ) : (
+              <p className="mt-3 rounded-xl border border-dashed border-border bg-muted/60 p-4 text-sm text-muted-foreground">
+                <Mic className="mr-1 inline size-4" aria-hidden />
+                This browser can't listen directly, but the microphone key on your phone keyboard
+                works a treat — tap the box below, then the mic on your keyboard.
+              </p>
+            )}
+
+            {speech.error && (
+              <p role="alert" className="mt-2 text-sm font-medium text-destructive">
+                {speech.error}
+              </p>
+            )}
+
             <Textarea
               id="ing"
               value={raw}
               onChange={(e) => setRaw(e.target.value)}
               rows={5}
-              autoFocus
               placeholder="chicken thighs, spinach, carrots, eggs, cream cheese, rice"
-              className="mt-3 min-h-32 rounded-xl bg-card p-4 text-base leading-relaxed shadow-[var(--shadow-soft)]"
+              className="mt-4 min-h-32 rounded-xl bg-card p-4 text-base leading-relaxed shadow-[var(--shadow-soft)]"
             />
-            <p className="mt-2 text-sm text-muted-foreground">
-              Type it, paste it, or use your phone's dictation button — commas or new lines both work.
-            </p>
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                Commas, new lines or just talking — all fine.
+              </p>
+              {raw.trim() !== "" && (
+                <button
+                  type="button"
+                  onClick={clearList}
+                  className="shrink-0 py-2 text-sm text-muted-foreground underline underline-offset-4"
+                >
+                  Clear list
+                </button>
+              )}
+            </div>
 
-            {ingredients.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {ingredients.map((i) => (
-                  <span
-                    key={i}
-                    className="rounded-full bg-accent px-3 py-1 text-sm text-accent-foreground"
-                  >
-                    {i}
-                  </span>
-                ))}
-              </div>
+            {restored && (
+              <p className="mt-3 rounded-xl bg-secondary p-3 text-sm text-secondary-foreground">
+                Picked your list back up from last time — edit away.
+              </p>
             )}
 
             <button
@@ -172,7 +295,7 @@ function DinnerRescue() {
               <span className="min-w-0">
                 <span className="block font-medium">Photo my fridge</span>
                 <span className="block text-sm text-muted-foreground">
-                  Coming soon — typing is faster for now
+                  Coming soon — talking is faster for now
                 </span>
               </span>
             </button>
@@ -182,9 +305,9 @@ function DinnerRescue() {
               size="xl"
               className="mt-6 w-full"
               disabled={ingredients.length === 0}
-              onClick={() => setStep("details")}
+              onClick={toConfirm}
             >
-              Next
+              Next — check my list
             </Button>
             {ingredients.length === 0 && (
               <p className="mt-2 text-center text-sm text-muted-foreground">
@@ -194,13 +317,71 @@ function DinnerRescue() {
           </Screen>
         )}
 
-        {step === "details" && (
+        {step === "confirm" && (
           <Screen
-            title="A couple of quick things"
-            onBack={() => setStep("ingredients")}
+            title={speech.supported ? "Here's what I heard" : "Here's what you've got"}
+            onBack={() => setStep("capture")}
             stepLabel="Step 2 of 2"
           >
-            <fieldset>
+            <p className="text-sm text-muted-foreground">
+              Tap the <X className="inline size-3.5" aria-hidden /> on anything that's wrong.{" "}
+              {ingredients.length} ingredient{ingredients.length === 1 ? "" : "s"} so far.
+            </p>
+
+            {ingredients.length > 0 ? (
+              <ul className="mt-4 flex flex-wrap gap-2">
+                {ingredients.map((i) => (
+                  <li key={i}>
+                    <button
+                      type="button"
+                      onClick={() => setRemoved((prev) => [...prev, i])}
+                      aria-label={`Remove ${i}`}
+                      className="flex min-h-11 items-center gap-2 rounded-full bg-accent px-4 text-base text-accent-foreground"
+                    >
+                      <span className="capitalize">{i}</span>
+                      <X className="size-4 opacity-70" aria-hidden />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-4 rounded-xl bg-card p-4 text-base">
+                Nothing in the list yet — add something below, or go back and have another go.
+              </p>
+            )}
+
+            <div className="mt-5">
+              <label htmlFor="extra" className="block font-medium">
+                Add anything I missed
+              </label>
+              <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                <Input
+                  id="extra"
+                  value={extra}
+                  onChange={(e) => setExtra(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addExtra();
+                    }
+                  }}
+                  placeholder="frozen peas"
+                  className="h-12 rounded-xl bg-card text-base"
+                />
+                <Button size="tap" onClick={addExtra} disabled={extra.trim().length < 2}>
+                  <Plus aria-hidden /> Add
+                </Button>
+              </div>
+              <button
+                type="button"
+                onClick={clearList}
+                className="mt-3 inline-flex items-center gap-2 py-2 text-sm text-muted-foreground underline underline-offset-4"
+              >
+                <Trash2 className="size-4" aria-hidden /> Clear list
+              </button>
+            </div>
+
+            <fieldset className="mt-7">
               <legend className="flex items-center gap-2 text-base font-medium">
                 <Users className="size-4" aria-hidden /> How many people?
               </legend>
@@ -220,7 +401,7 @@ function DinnerRescue() {
               </div>
             </fieldset>
 
-            <fieldset className="mt-7">
+            <fieldset className="mt-6">
               <legend className="flex items-center gap-2 text-base font-medium">
                 <ChefHat className="size-4" aria-hidden /> How much effort tonight?
               </legend>
@@ -249,63 +430,99 @@ function DinnerRescue() {
               </div>
             </fieldset>
 
-            <div className="mt-7 space-y-4">
-              <div>
-                <label htmlFor="avoid" className="block font-medium">
-                  Anything you don't eat?{" "}
-                  <span className="font-normal text-muted-foreground">(optional)</span>
-                </label>
-                <Input
-                  id="avoid"
-                  value={avoid}
-                  onChange={(e) => setAvoid(e.target.value)}
-                  placeholder="mushrooms, pork"
-                  className="mt-2 h-12 rounded-xl bg-card text-base"
-                />
-              </div>
-              <div>
-                <label htmlFor="useup" className="block font-medium">
-                  What needs using up first?{" "}
-                  <span className="font-normal text-muted-foreground">(optional)</span>
-                </label>
-                <Input
-                  id="useup"
-                  value={useUp}
-                  onChange={(e) => setUseUp(e.target.value)}
-                  placeholder="spinach, cream"
-                  className="mt-2 h-12 rounded-xl bg-card text-base"
-                />
-              </div>
-            </div>
+            <button
+              type="button"
+              onClick={() => setShowOptional((v) => !v)}
+              aria-expanded={showOptional}
+              className="mt-6 w-full rounded-xl border border-border bg-card/60 p-4 text-left font-medium"
+            >
+              {showOptional ? "Hide" : "Anything to avoid or use up first?"}{" "}
+              <span className="font-normal text-muted-foreground">(optional)</span>
+            </button>
 
-            <Button variant="hero" size="xl" className="mt-7 w-full" onClick={rescue}>
-              <Sparkles aria-hidden /> Show me three dinners
+            {showOptional && (
+              <div className="mt-3 space-y-4">
+                <div>
+                  <label htmlFor="avoid" className="block font-medium">
+                    Anything you don't eat?
+                  </label>
+                  <Input
+                    id="avoid"
+                    value={avoid}
+                    onChange={(e) => setAvoid(e.target.value)}
+                    placeholder="mushrooms, pork"
+                    className="mt-2 h-12 rounded-xl bg-card text-base"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="useup" className="block font-medium">
+                    What needs using up first?
+                  </label>
+                  <Input
+                    id="useup"
+                    value={useUp}
+                    onChange={(e) => setUseUp(e.target.value)}
+                    placeholder="spinach, cream"
+                    className="mt-2 h-12 rounded-xl bg-card text-base"
+                  />
+                </div>
+              </div>
+            )}
+
+            <Button
+              variant="hero"
+              size="xl"
+              className="mt-7 w-full"
+              disabled={ingredients.length === 0 || generating}
+              onClick={rescue}
+            >
+              {generating ? (
+                "Working on it…"
+              ) : (
+                <>
+                  <Sparkles aria-hidden /> Looks right — find my dinners
+                </>
+              )}
             </Button>
           </Screen>
         )}
 
         {step === "results" && (
-          <Screen title="Three dinners for tonight" onBack={() => setStep("details")}>
+          <Screen
+            title={suggestions.length >= 3 ? "Three dinners for tonight" : "What I can do tonight"}
+            onBack={() => setStep("confirm")}
+          >
             <p className="text-sm text-muted-foreground">
               Based on {ingredients.length} ingredient{ingredients.length === 1 ? "" : "s"} you've
               got, for {people === "5+" ? "5 or more" : people}{" "}
               {people === "1" ? "person" : "people"}.
             </p>
-            <div className="mt-4 space-y-4">
-              {suggestions.map((s) => (
-                <SuggestionCard key={s.recipe.id} s={s} onChoose={() => choose(s)} />
-              ))}
-            </div>
-            <Button variant="warm" size="tap" className="mt-5 w-full" onClick={rescue}>
-              Not tonight — try again
-            </Button>
-            <button
-              type="button"
-              onClick={() => setStep("feedback")}
-              className="mt-3 w-full py-3 text-sm text-muted-foreground underline underline-offset-4"
-            >
-              None of these worked
-            </button>
+
+            {suggestions.length === 0 ? (
+              <NeedMore ingredients={ingredients} onBack={() => setStep("confirm")} />
+            ) : (
+              <>
+                <div className="mt-4 space-y-4">
+                  {suggestions.map((s) => (
+                    <SuggestionCard key={s.recipe.id} s={s} onChoose={() => choose(s)} />
+                  ))}
+                </div>
+                {suggestions.length < 3 && (
+                  <NeedMore
+                    ingredients={ingredients}
+                    partial
+                    onBack={() => setStep("confirm")}
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setStep("feedback")}
+                  className="mt-4 w-full py-3 text-sm text-muted-foreground underline underline-offset-4"
+                >
+                  None of these worked
+                </button>
+              </>
+            )}
           </Screen>
         )}
 
@@ -396,14 +613,22 @@ function DinnerRescue() {
               )}
             </section>
 
-            <Button variant="hero" size="xl" className="mt-7 w-full" onClick={() => setStep("feedback")}>
+            <Button
+              variant="hero"
+              size="xl"
+              className="mt-7 w-full"
+              onClick={() => setStep("feedback")}
+            >
               Done cooking
             </Button>
           </Screen>
         )}
 
         {step === "feedback" && (
-          <Screen title={done ? "Thanks, legend" : "How did that go?"} onBack={() => setStep(chosen ? "cook" : "results")}>
+          <Screen
+            title={done ? "Thanks, legend" : "How did that go?"}
+            onBack={() => setStep(chosen ? "cook" : "results")}
+          >
             {done ? (
               <div className="card-soft p-6 text-center">
                 <Utensils className="mx-auto size-8 text-primary" aria-hidden />
@@ -482,7 +707,43 @@ function DinnerRescue() {
   );
 }
 
-function Welcome({ onStart }: { onStart: () => void }) {
+function NeedMore({
+  ingredients,
+  partial,
+  onBack,
+}: {
+  ingredients: string[];
+  partial?: boolean;
+  onBack: () => void;
+}) {
+  return (
+    <section className="mt-5 rounded-2xl border-2 border-primary/30 bg-warm p-5">
+      <h2 className="text-lg text-warm-foreground">
+        {partial ? "I can do more with one more clue" : "I can work with this, but I need one more clue"}
+      </h2>
+      <p className="mt-2 text-base leading-relaxed text-warm-foreground/90">
+        {partial
+          ? "That's everything that genuinely matches your list — I'd rather show fewer than pretend."
+          : `I've got ${ingredients.length} ingredient${ingredients.length === 1 ? "" : "s"} but nothing that adds up to a dinner yet.`}{" "}
+        Add a protein (chicken, mince, eggs, tinned fish), a carb (rice, pasta, potatoes, tortillas)
+        or a veg and I'll have another go.
+      </p>
+      <Button variant="hero" size="xl" className="mt-4 w-full" onClick={onBack}>
+        <Plus aria-hidden /> Add another ingredient
+      </Button>
+    </section>
+  );
+}
+
+function Welcome({
+  onStart,
+  resumeCount,
+  onResume,
+}: {
+  onStart: () => void;
+  resumeCount: number;
+  onResume: () => void;
+}) {
   return (
     <div className="flex min-h-[78vh] flex-col justify-center py-10">
       <div className="flex items-center gap-2 text-primary">
@@ -493,15 +754,20 @@ function Welcome({ onStart }: { onStart: () => void }) {
         Don't know what to cook? Let's use what you've already got.
       </h1>
       <p className="mt-4 text-lg leading-relaxed text-muted-foreground">
-        Tell us what's in the fridge, freezer or pantry. You'll get three dinners in about a minute —
-        no second trip to the shops.
+        Say or type what's in the fridge, freezer or pantry. You'll get three dinners in about a
+        minute — no second trip to the shops.
       </p>
       <Button variant="hero" size="xl" className="mt-8 w-full" onClick={onStart}>
         Rescue my dinner
       </Button>
+      {resumeCount > 0 && (
+        <Button variant="warm" size="xl" className="mt-3 w-full" onClick={onResume}>
+          Pick up my list ({resumeCount} ingredients)
+        </Button>
+      )}
       <ul className="mt-6 space-y-2 text-sm text-muted-foreground">
         <li className="flex items-center gap-2">
-          <Check className="size-4 text-success" aria-hidden /> Three ideas, not fifty
+          <Check className="size-4 text-success" aria-hidden /> Speak it — no typing needed
         </li>
         <li className="flex items-center gap-2">
           <Check className="size-4 text-success" aria-hidden /> No shopping wherever possible
@@ -525,8 +791,13 @@ function Screen({
   stepLabel?: string;
   children: React.ReactNode;
 }) {
+  const top = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    top.current?.scrollIntoView({ block: "start" });
+  }, [title]);
+
   return (
-    <div className="py-2">
+    <div ref={top} className="py-2">
       <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
         <button
           type="button"

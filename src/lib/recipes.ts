@@ -143,15 +143,100 @@ export function normalise(raw: string): string {
 }
 
 
+/** Words/phrases that are never ingredients — dictation filler and vagueness. */
+const NOISE = new Set([
+  "um",
+  "uh",
+  "er",
+  "ok",
+  "okay",
+  "yeah",
+  "yep",
+  "nah",
+  "usual",
+  "the usual",
+  "stuff",
+  "things",
+  "thing",
+  "etc",
+  "whatever",
+  "that's it",
+  "thats it",
+  "done",
+  "left",
+  "leftovers",
+  "bits",
+  "few other pantry staples",
+  "pantry staples",
+  "staples",
+  "normally",
+  "usually",
+  "what's that one",
+  "whats that one",
+  "sauces",
+  "no idea",
+]);
+
+/** Phrases that add nothing but appear constantly in spoken lists. */
+const FILLER_PHRASES = [
+  /\byou can think of\b/g,
+  /\bpretty much\b/g,
+  /\ball the\b/g,
+  /\bor something\b/g,
+  /\bas well\b/g,
+  /\bi think\b/g,
+  /\bin the (fridge|freezer|pantry|cupboard)\b/g,
+  /\bfrom the (fridge|freezer|pantry|cupboard)\b/g,
+  /\bor so\b/g,
+  /\bleft ?over\b/g,
+];
+
+const LEADING_JUNK =
+  /^(i'?ve|i'?m|i|we'?ve|we|you|have|has|had|got|get|there'?s|there|is|are|also|plus|then|maybe|just|still|only|about|around|roughly|my|our|the|a|an|of|some|any|little|bit|couple|few|half|lots|loads|heaps|plenty|bunch|dozen|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b\s*/;
+
+const CONTAINER_JUNK =
+  /^(bag|bags|jar|jars|tin|tins|can|cans|tinned|canned|packet|packets|pack|packs|box|boxes|bottle|bottles|carton|cartons|tub|tubs|punnet|punnets|block|blocks|slice|slices|handful|handfuls|spoon|spoons|tablespoon|teaspoon|cup|cups|kg|kgs|g|grams|gram|ml|litre|litres|l)\b\s*(of\b\s*)?/;
+
+function cleanItem(part: string): string | null {
+  let s = part
+    .toLowerCase()
+    .replace(/[^a-z0-9'\-\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  for (const rx of FILLER_PHRASES) s = s.replace(rx, " ");
+  s = s.replace(/\s+/g, " ").trim();
+
+  // Strip leading quantities, containers and conversational lead-ins, repeatedly.
+  for (let i = 0; i < 6; i++) {
+    const before = s;
+    s = s.replace(LEADING_JUNK, "").replace(CONTAINER_JUNK, "").trim();
+    if (s === before) break;
+  }
+
+  s = s.replace(/\s+(left|remaining|only)$/, "").replace(/\s+of$/, "").trim();
+
+  if (s.length < 2 || s.length > 40) return null;
+  if (NOISE.has(s)) return null;
+  if (!/[aeiou]/.test(s)) return null;
+
+  return normalise(s);
+}
+
 export function parseIngredients(text: string): string[] {
-  return Array.from(
-    new Set(
-      text
-        .split(/[,\n;]|\band\b|\+/gi)
-        .map((p) => normalise(p.replace(/^(some|a bit of|half a|a|an|the)\s+/i, "")))
-        .filter((p) => p.length > 1 && p.length < 40),
-    ),
-  );
+  const cleaned = text
+    .replace(/\b(um+|uh+|erm+|hmm+)\b/gi, " ")
+    .replace(/\b(i'?ve got|i have got|i have|we'?ve got|i got)\b/gi, ",");
+
+  const parts = cleaned.split(/[,;.\n\u2022\/]|\band\b|\bplus\b|\balso\b|\bas well as\b|\bthen\b|\+/gi);
+
+  const out: string[] = [];
+  for (const part of parts) {
+    const item = cleanItem(part);
+    if (item && !out.includes(item)) out.push(item);
+    if (out.length >= 80) break;
+  }
+  return out;
 }
 
 function matches(have: string[], want: string): boolean {
@@ -611,26 +696,13 @@ export function generateSuggestions(input: RescueInput): Suggestion[] {
     .filter((s) => !s.blocked && s.used.length > 0)
     .sort((a, b) => b.score - a.score || a.minutes - b.minutes);
 
-  const picked = scored.slice(0, 3);
-
-  if (picked.length < 3) {
-    for (const recipe of RECIPES) {
-      if (picked.length >= 3) break;
-      if (picked.some((p) => p.recipe.id === recipe.id)) continue;
-      const all = [...recipe.core, ...recipe.bonus];
-      const blocked = avoid.some((a) => a.length > 2 && all.some((item) => item.includes(a) || a.includes(item)));
-      if (blocked) continue;
-      picked.push({
-        recipe,
-        score: 0,
-        used: have.filter((h) => all.some((item) => item.includes(h) || h.includes(item))),
-        missing: recipe.core.filter((item) => !matches(have, item)),
-        minutes: recipe.baseMinutes,
-        servings,
-        blocked: false,
-      });
-    }
-  }
+  // Only genuinely plausible matches — never pad with unrelated filler recipes.
+  const picked = scored
+    .filter((s) => {
+      const coreHits = s.recipe.core.filter((c) => matches(have, c)).length;
+      return coreHits >= 1 && (coreHits === s.recipe.core.length || s.used.length >= 2);
+    })
+    .slice(0, 3);
 
   return picked.map(({ recipe, score, used, missing, minutes }) => ({
     recipe,
