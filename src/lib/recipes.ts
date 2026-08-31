@@ -696,26 +696,13 @@ export function generateSuggestions(input: RescueInput): Suggestion[] {
     .filter((s) => !s.blocked && s.used.length > 0)
     .sort((a, b) => b.score - a.score || a.minutes - b.minutes);
 
-  const picked = scored.slice(0, 3);
-
-  if (picked.length < 3) {
-    for (const recipe of RECIPES) {
-      if (picked.length >= 3) break;
-      if (picked.some((p) => p.recipe.id === recipe.id)) continue;
-      const all = [...recipe.core, ...recipe.bonus];
-      const blocked = avoid.some((a) => a.length > 2 && all.some((item) => item.includes(a) || a.includes(item)));
-      if (blocked) continue;
-      picked.push({
-        recipe,
-        score: 0,
-        used: have.filter((h) => all.some((item) => item.includes(h) || h.includes(item))),
-        missing: recipe.core.filter((item) => !matches(have, item)),
-        minutes: recipe.baseMinutes,
-        servings,
-        blocked: false,
-      });
-    }
-  }
+  // Only genuinely plausible matches — never pad with unrelated filler recipes.
+  const picked = scored
+    .filter((s) => {
+      const coreHits = s.recipe.core.filter((c) => matches(have, c)).length;
+      return coreHits >= 1 && (coreHits === s.recipe.core.length || s.used.length >= 2);
+    })
+    .slice(0, 3);
 
   return picked.map(({ recipe, score, used, missing, minutes }) => ({
     recipe,
