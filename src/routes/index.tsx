@@ -49,7 +49,7 @@ export const Route = createFileRoute("/")({
       { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  component: DinnerRescue;
+  component: DinnerRescue,
 });
 
 type Step = "welcome" | "talk" | "choices" | "results" | "cook" | "feedback";
