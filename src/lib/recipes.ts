@@ -1,5 +1,7 @@
 // Deterministic recipe engine for the Dinner Rescue prototype.
-// No AI required: matches typed ingredients against a small recipe library.
+// Strict rule: a recipe is only eligible when EVERY ingredient it needs is
+// something the user told us they have. The only assumed basics are water,
+// salt, pepper and a generic cooking oil.
 
 export type Effort = "lazy" | "normal" | "keen";
 
@@ -8,21 +10,22 @@ export type RecipeTemplate = {
   name: string;
   effort: Effort;
   baseMinutes: number;
-  /** Core ingredients — at least some must be on hand or it becomes a shop trip. */
+  /** Every one of these must be on hand or the recipe is not offered. */
   core: string[];
-  /** Nice-to-have extras that boost the match if present. */
+  /** Extras we'll happily fold in — only ever mentioned when the user has them. */
   bonus: string[];
-  /** Assumed pantry staples we don't count as shopping. */
-  staples: string[];
   blurb: string;
+  /** Steps may only mention core ingredients plus universal basics. */
   steps: string[];
 };
 
 export type Suggestion = {
   recipe: RecipeTemplate;
   score: number;
+  /** Canonical ingredients this dinner will actually use. */
   used: string[];
-  missing: string[];
+  /** Extras from the user's own list folded in. */
+  extras: string[];
   minutes: number;
   servings: number;
 };
@@ -34,6 +37,9 @@ export type RescueInput = {
   avoid: string;
   useUp: string;
 };
+
+/** The only things we assume are in every kitchen. */
+export const UNIVERSAL_BASICS = ["water", "salt", "pepper", "cooking oil"];
 
 const ALIASES: Record<string, string> = {
   chook: "chicken",
@@ -72,17 +78,17 @@ const ALIASES: Record<string, string> = {
   "sour cream": "cream",
   yoghurt: "yoghurt",
   yogurt: "yoghurt",
-  "cheddar": "cheese",
+  cheddar: "cheese",
   "tasty cheese": "cheese",
   parmesan: "cheese",
   haloumi: "halloumi",
-  "beans": "bean",
+  beans: "bean",
   "tinned beans": "bean",
   broc: "broccoli",
   "frozen peas": "pea",
   peas: "pea",
   "puff pastry": "pastry",
-  "tortillas": "tortilla",
+  tortillas: "tortilla",
   wraps: "tortilla",
   "flat bread": "tortilla",
   couscous: "couscous",
@@ -108,16 +114,19 @@ const ALIASES: Record<string, string> = {
   "greek yoghurt": "yoghurt",
   "greek yogurt": "yoghurt",
   "philadelphia cream cheese": "cream cheese",
-  "philadelphia": "cream cheese",
+  philadelphia: "cream cheese",
   avocado: "avocado",
   avocados: "avocado",
-  "tomato sauce": "tomato",
+  "half an avocado": "avocado",
+  "tomato sauce": "tomato sauce",
   "vine ripened tomato": "tomato",
   "tomato vine ripened": "tomato",
   jalapeno: "jalapeno",
   jalapenos: "jalapeno",
   oat: "oat",
   oats: "oat",
+  "weet-bix": "weet-bix",
+  weetbix: "weet-bix",
   "white rice": "rice",
   "plain flour": "flour",
   "self-raising flour": "flour",
@@ -127,13 +136,17 @@ const ALIASES: Record<string, string> = {
   steak: "steak",
   steaks: "steak",
   "rump steak": "steak",
-  "porterhouse": "steak",
+  porterhouse: "steak",
   "scotch fillet": "steak",
   "chicken bits": "chicken",
   "chicken pieces": "chicken",
   "frozen pea": "pea",
   "gravy mix": "gravy",
   gravy: "gravy",
+  "wholegrain mustard": "mustard",
+  "whole grain mustard": "mustard",
+  "dijon": "mustard",
+  "mustard powder": "mustard",
 };
 
 export function normalise(raw: string): string {
@@ -141,7 +154,6 @@ export function normalise(raw: string): string {
   const singular = s.endsWith("s") ? s.slice(0, -1) : s;
   return ALIASES[s] ?? ALIASES[singular] ?? s;
 }
-
 
 /** Words/phrases that are never ingredients — dictation filler and vagueness. */
 const NOISE = new Set([
@@ -175,6 +187,20 @@ const NOISE = new Set([
   "whats that one",
   "sauces",
   "no idea",
+  "hang on",
+  "hold on",
+  "wait",
+  "let me look",
+  "let me check",
+  "checking the freezer",
+  "checking the fridge",
+  "checking the pantry",
+  "oh",
+  "well",
+  "right",
+  "so",
+  "and",
+  "as well",
 ]);
 
 /** Phrases that add nothing but appear constantly in spoken lists. */
@@ -185,6 +211,10 @@ const FILLER_PHRASES = [
   /\bor something\b/g,
   /\bas well\b/g,
   /\bi think\b/g,
+  /\bi'?m checking\b/g,
+  /\bhang on\b/g,
+  /\bhold on\b/g,
+  /\blet me (look|check|see)\b/g,
   /\bin the (fridge|freezer|pantry|cupboard)\b/g,
   /\bfrom the (fridge|freezer|pantry|cupboard)\b/g,
   /\bor so\b/g,
@@ -192,7 +222,7 @@ const FILLER_PHRASES = [
 ];
 
 const LEADING_JUNK =
-  /^(i'?ve|i'?m|i|we'?ve|we|you|have|has|had|got|get|there'?s|there|is|are|also|plus|then|maybe|just|still|only|about|around|roughly|my|our|the|a|an|of|some|any|little|bit|couple|few|half|lots|loads|heaps|plenty|bunch|dozen|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b\s*/;
+  /^(oh|well|so|right|and|i'?ve|i'?m|i|we'?ve|we|you|have|has|had|got|get|there'?s|there|is|are|also|plus|then|maybe|just|still|only|about|around|roughly|my|our|the|a|an|of|some|any|little|bit|couple|few|half|lots|loads|heaps|plenty|bunch|dozen|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b\s*/;
 
 const CONTAINER_JUNK =
   /^(bag|bags|jar|jars|tin|tins|can|cans|tinned|canned|packet|packets|pack|packs|box|boxes|bottle|bottles|carton|cartons|tub|tubs|punnet|punnets|block|blocks|slice|slices|handful|handfuls|spoon|spoons|tablespoon|teaspoon|cup|cups|kg|kgs|g|grams|gram|ml|litre|litres|l)\b\s*(of\b\s*)?/;
@@ -226,9 +256,12 @@ function cleanItem(part: string): string | null {
 export function parseIngredients(text: string): string[] {
   const cleaned = text
     .replace(/\b(um+|uh+|erm+|hmm+)\b/gi, " ")
-    .replace(/\b(i'?ve got|i have got|i have|we'?ve got|i got)\b/gi, ",");
+    .replace(/\b(i'?ve got|i have got|i have|we'?ve got|i got)\b/gi, ",")
+    .replace(/\b(hang on|hold on|let me (look|check|see))\b/gi, ",");
 
-  const parts = cleaned.split(/[,;.\n\u2022\/]|\band\b|\bplus\b|\balso\b|\bas well as\b|\bthen\b|\+/gi);
+  const parts = cleaned.split(
+    /[,;.\n\u2022\/]|\band\b|\bplus\b|\balso\b|\bas well as\b|\bthen\b|\boh\b|\+|…|\.{2,}/gi,
+  );
 
   const out: string[] = [];
   for (const part of parts) {
@@ -239,8 +272,9 @@ export function parseIngredients(text: string): string[] {
   return out;
 }
 
-function matches(have: string[], want: string): boolean {
-  return have.some((h) => h.includes(want) || want.includes(h));
+/** True when the user's list contains something that stands in for `want`. */
+function has(have: string[], want: string): boolean {
+  return have.some((h) => h === want || h.includes(want) || want.includes(h));
 }
 
 const R = (r: RecipeTemplate) => r;
@@ -252,34 +286,32 @@ export const RECIPES: RecipeTemplate[] = [
     effort: "lazy",
     baseMinutes: 20,
     core: ["rice", "egg"],
-    bonus: ["carrot", "pea", "spring onion", "chicken", "bacon", "capsicum", "broccoli", "prawn"],
-    staples: ["soy sauce", "oil", "garlic"],
-    blurb: "The classic rescue meal. Anything sad in the crisper goes in.",
+    bonus: ["carrot", "pea", "onion", "chicken", "bacon", "capsicum", "broccoli", "cabbage", "soy sauce"],
+    blurb: "The classic rescue meal, built on rice and eggs.",
     steps: [
-      "Heat a good splash of oil in your biggest frypan or wok over high heat.",
-      "Beat the eggs, pour them in, scramble quickly, then tip them onto a plate.",
-      "Fry the harder veg first (carrot, capsicum, broccoli) for 3–4 minutes until just tender.",
-      "Add the rice and press it into the pan so it catches and crisps a little.",
-      "Return the egg, add any cooked meat, then a good splash of soy sauce. Toss through.",
-      "Taste, add more soy or a crack of pepper, and serve straight from the pan.",
+      "Cook the rice if it isn't already cooked, then spread it out to cool for a few minutes.",
+      "Heat a good splash of oil in your biggest frypan over high heat.",
+      "Beat the eggs with a pinch of salt, pour them in, scramble quickly, then tip onto a plate.",
+      "Add the rice to the hot pan and press it flat so it catches and crisps a little.",
+      "Return the egg, toss it through and season well with salt and pepper.",
+      "Serve straight from the pan while it's steaming.",
     ],
   }),
   R({
-    id: "creamy-chicken-spinach",
-    name: "Creamy chicken and spinach skillet",
+    id: "chicken-spinach-pan",
+    name: "Chicken and spinach pan-fry",
     effort: "normal",
     baseMinutes: 25,
     core: ["chicken", "spinach"],
-    bonus: ["cream cheese", "cream", "garlic", "mushroom", "rice", "pasta", "onion"],
-    staples: ["oil", "salt", "pepper"],
-    blurb: "One pan, silky sauce, no shopping if you've got something creamy.",
+    bonus: ["cream cheese", "cream", "garlic", "mushroom", "rice", "pasta", "onion", "cheese"],
+    blurb: "One pan, ten minutes of work, proper dinner.",
     steps: [
       "Cut the chicken into bite-sized pieces and season well with salt and pepper.",
       "Brown the chicken in a hot oiled pan for 5–6 minutes. Don't crowd it.",
-      "Add garlic and onion if you have them, cook 1 minute until fragrant.",
-      "Stir through the cream cheese (or cream) with a splash of water to loosen it into a sauce.",
-      "Add the spinach in handfuls, stirring until it wilts down.",
-      "Simmer 3–4 minutes until the chicken is cooked through, then serve over rice or pasta.",
+      "Add a splash of water to the pan and scrape up the sticky brown bits.",
+      "Add the spinach in handfuls, stirring until it wilts right down.",
+      "Simmer 3–4 minutes until the chicken is cooked right through (75°C in the thickest piece).",
+      "Taste, season again, and serve.",
     ],
   }),
   R({
@@ -289,15 +321,14 @@ export const RECIPES: RecipeTemplate[] = [
     baseMinutes: 40,
     core: ["potato", "carrot"],
     bonus: ["chicken", "sausage", "pumpkin", "onion", "capsicum", "sweet potato", "chickpea", "broccoli"],
-    staples: ["oil", "salt", "pepper"],
     blurb: "Ten minutes of chopping, then the oven does the rest.",
     steps: [
       "Heat the oven to 200°C (180°C fan).",
-      "Chop everything into roughly even chunks so it cooks at the same rate.",
+      "Chop the potato and carrot into roughly even chunks so they cook at the same rate.",
       "Toss on a lined tray with plenty of oil, salt and pepper.",
-      "Roast 30–35 minutes, giving it a shake halfway.",
-      "If you've added chicken or sausages, check they're cooked right through (75°C in the thickest part).",
-      "Serve straight off the tray with yoghurt or a squeeze of lemon if you've got it.",
+      "Roast 30–35 minutes, giving the tray a shake halfway.",
+      "If you've added meat, check it's cooked right through (75°C in the thickest part).",
+      "Serve straight off the tray.",
     ],
   }),
   R({
@@ -305,71 +336,67 @@ export const RECIPES: RecipeTemplate[] = [
     name: "Anything-goes pasta bake",
     effort: "normal",
     baseMinutes: 35,
-    core: ["pasta", "cheese"],
-    bonus: ["tomato", "beef mince", "spinach", "onion", "cream", "bacon", "zucchini", "mushroom"],
-    staples: ["oil", "garlic", "salt"],
-    blurb: "Feeds a crowd, reheats brilliantly, forgives almost anything.",
+    core: ["pasta", "cheese", "tomato"],
+    bonus: ["beef mince", "spinach", "onion", "bacon", "zucchini", "mushroom", "chicken"],
+    blurb: "Feeds a crowd and reheats brilliantly.",
     steps: [
-      "Heat the oven to 200°C and boil the pasta two minutes short of the packet time.",
-      "While it cooks, fry the onion and any mince or veg in an oven-proof pan.",
-      "Add the tomato (or a splash of cream) and simmer 5 minutes to thicken.",
-      "Drain the pasta, saving a cup of the water, and stir it through the sauce with a splash of that water.",
+      "Heat the oven to 200°C and boil the pasta in well-salted water, two minutes short of packet time.",
+      "Chop the tomato and simmer it in an oiled oven-proof pan for 6–8 minutes until saucy.",
+      "Drain the pasta, keeping a cup of the water, and stir it through the sauce with a splash of that water.",
+      "Season firmly with salt and pepper.",
       "Scatter the cheese over the top.",
       "Bake 15 minutes until bubbling and golden. Rest 5 minutes before serving.",
     ],
   }),
   R({
     id: "omelette",
-    name: "Big pan omelette with whatever's left",
+    name: "Big pan omelette",
     effort: "lazy",
     baseMinutes: 12,
     core: ["egg"],
-    bonus: ["cheese", "spinach", "mushroom", "tomato", "onion", "bacon", "potato", "capsicum"],
-    staples: ["butter", "salt", "pepper"],
+    bonus: ["cheese", "spinach", "mushroom", "tomato", "onion", "bacon", "potato", "capsicum", "avocado"],
     blurb: "Dinner in twelve minutes when you truly cannot be bothered.",
     steps: [
-      "Beat the eggs with a pinch of salt until completely smooth.",
-      "Cook any veg or bacon in a buttered pan over medium heat until softened.",
-      "Pour the eggs over and turn the heat down low.",
+      "Beat the eggs with a good pinch of salt and pepper until completely smooth.",
+      "Heat a little oil in a non-stick pan over medium heat.",
+      "Pour the eggs in and turn the heat down low.",
       "Drag the set edges into the middle a few times, then leave it alone to set.",
-      "Scatter cheese over one half and fold it over.",
+      "Fold it over on itself once the top is just barely wet.",
       "Slide onto a plate and eat immediately.",
     ],
   }),
   R({
-    id: "san-choy-bau",
-    name: "Speedy mince stir-fry bowls",
+    id: "mince-stirfry",
+    name: "Speedy mince bowls",
     effort: "normal",
     baseMinutes: 20,
-    core: ["beef mince"],
-    bonus: ["rice", "carrot", "onion", "garlic", "capsicum", "lettuce", "noodle", "cabbage"],
-    staples: ["soy sauce", "oil"],
-    blurb: "Big flavour from mince and whatever veg is hanging around.",
+    core: ["beef mince", "rice"],
+    bonus: ["carrot", "onion", "garlic", "capsicum", "cabbage", "pea", "soy sauce"],
+    blurb: "Big flavour from mince, over rice.",
     steps: [
+      "Start the rice so it's ready when the pan is.",
       "Get a pan very hot with a little oil.",
       "Brown the mince hard without stirring too much — you want colour, not steam.",
-      "Add garlic, onion and any finely chopped veg. Cook 3–4 minutes.",
-      "Splash in soy sauce and a spoon of any sweet thing (honey, sauce, jam) to balance it.",
-      "Simmer 2 minutes until glossy and the mince is cooked through.",
-      "Spoon over rice, noodles or into lettuce cups.",
+      "Add a splash of water and scrape the pan so the juices coat the mince.",
+      "Simmer 2 minutes until the mince is cooked right through, then season well with salt and pepper.",
+      "Spoon it over the rice.",
     ],
   }),
   R({
-    id: "soup",
+    id: "veg-soup",
     name: "Bottom-of-the-fridge veg soup",
     effort: "lazy",
     baseMinutes: 30,
-    core: ["carrot", "onion"],
-    bonus: ["potato", "pumpkin", "celery", "stock", "tomato", "bean", "chickpea", "sweet potato", "cream"],
-    staples: ["stock", "oil", "salt"],
+    core: ["carrot", "onion", "potato"],
+    bonus: ["pumpkin", "celery", "tomato", "bean", "chickpea", "sweet potato", "lentil"],
     blurb: "The most forgiving way to use up tired vegetables.",
     steps: [
-      "Roughly chop everything — it's getting blended or eaten chunky, so don't fuss.",
+      "Roughly chop the veg — it's getting blended, so don't fuss.",
       "Soften the onion in oil in a large pot for 5 minutes.",
-      "Add the rest of the veg and stir for 2 minutes.",
-      "Pour in enough stock or water to just cover, then simmer 20 minutes until everything is soft.",
-      "Blend smooth, or mash a bit for a chunky soup.",
-      "Season generously — soup needs more salt than you think. Add a swirl of cream if you have it.",
+      "Add the carrot and potato and stir for 2 minutes.",
+      "Pour in enough water to just cover, then simmer 20 minutes until everything is soft.",
+      "Blend smooth, or mash for a chunky soup.",
+      "Season generously — soup needs more salt and pepper than you'd think.",
     ],
   }),
   R({
@@ -378,52 +405,32 @@ export const RECIPES: RecipeTemplate[] = [
     effort: "lazy",
     baseMinutes: 15,
     core: ["tortilla", "cheese"],
-    bonus: ["bean", "chicken", "capsicum", "onion", "corn", "tomato", "spinach", "beef mince"],
-    staples: ["oil"],
+    bonus: ["bean", "chicken", "capsicum", "onion", "corn", "tomato", "spinach", "beef mince", "jalapeno"],
     blurb: "Toasty, cheesy and ready before the kettle boils.",
     steps: [
-      "Chop your fillings small so the tortilla still folds flat.",
-      "Scatter cheese over half a tortilla, add fillings, then more cheese to glue it.",
-      "Fold it over and press down.",
-      "Cook in a dry or lightly oiled pan over medium heat, 2–3 minutes a side, until golden and crisp.",
+      "Scatter cheese over half a tortilla, then fold it over and press down.",
+      "Heat a lightly oiled pan over medium heat.",
+      "Cook 2–3 minutes a side until golden and crisp and the cheese has melted.",
+      "Repeat with the rest of the tortillas.",
       "Rest for a minute so the cheese sets slightly.",
-      "Cut into wedges and serve with yoghurt or any sauce you've got.",
+      "Cut into wedges, season with a little salt and pepper, and serve.",
     ],
   }),
   R({
     id: "curry",
-    name: "House curry with what's on hand",
+    name: "House curry",
     effort: "keen",
     baseMinutes: 40,
-    core: ["onion", "tomato"],
-    bonus: ["chicken", "chickpea", "potato", "cream", "yoghurt", "spinach", "rice", "pumpkin", "cauliflower"],
-    staples: ["curry powder", "oil", "garlic", "salt"],
+    core: ["onion", "tomato", "curry powder", "rice"],
+    bonus: ["chicken", "chickpea", "potato", "cream", "yoghurt", "spinach", "pumpkin", "lentil"],
     blurb: "Worth the extra ten minutes. Better the next day, too.",
     steps: [
       "Slice the onion finely and cook slowly in oil for 8–10 minutes until genuinely golden. This is the whole dish.",
-      "Add garlic and a heaped tablespoon of curry powder or paste. Stir 1 minute until it smells toasty.",
-      "Add the tomato and cook down for 5 minutes into a thick paste.",
-      "Add your protein and hardier veg, then enough water or stock to nearly cover.",
-      "Simmer gently 20 minutes, uncovered, until thickened and the chicken is cooked through.",
-      "Finish with cream or yoghurt off the heat, stir in any greens, and serve with rice.",
-    ],
-  }),
-  R({
-    id: "risotto",
-    name: "Slow-stirred rice with greens",
-    effort: "keen",
-    baseMinutes: 35,
-    core: ["rice", "stock"],
-    bonus: ["mushroom", "spinach", "cheese", "onion", "pea", "cream", "chicken", "zucchini"],
-    staples: ["butter", "oil", "garlic", "stock"],
-    blurb: "Twenty minutes of stirring, and it's genuinely lovely.",
-    steps: [
-      "Warm the stock in a small pot and keep it on a low heat.",
-      "Soften the onion in butter and oil for 5 minutes without browning.",
-      "Add the rice and stir for 2 minutes until the grains look glassy at the edges.",
-      "Add the warm stock a ladle at a time, stirring, waiting until each is absorbed. About 18–20 minutes.",
-      "Stir through mushrooms or greens for the last 5 minutes.",
-      "Off the heat, beat in cheese and a knob of butter. Rest 2 minutes, then serve loose, not stiff.",
+      "Stir in a heaped tablespoon of curry powder for 1 minute until it smells toasty.",
+      "Add the chopped tomato and cook down for 5 minutes into a thick paste.",
+      "Pour in enough water to make a loose sauce and simmer gently 20 minutes, uncovered.",
+      "Start the rice while the curry simmers.",
+      "Season with salt and pepper and spoon over the rice.",
     ],
   }),
   R({
@@ -432,34 +439,32 @@ export const RECIPES: RecipeTemplate[] = [
     effort: "normal",
     baseMinutes: 30,
     core: ["egg", "potato"],
-    bonus: ["cheese", "spinach", "onion", "zucchini", "bacon", "capsicum", "pea", "cream"],
-    staples: ["oil", "salt", "pepper"],
+    bonus: ["cheese", "spinach", "onion", "zucchini", "bacon", "capsicum", "pea"],
     blurb: "Great hot, great cold in tomorrow's lunchbox.",
     steps: [
       "Heat the oven to 190°C.",
-      "Slice the potato thinly and fry in an oven-proof pan for 8–10 minutes until nearly tender.",
-      "Add the other veg and cook until any water has evaporated.",
-      "Beat the eggs with a splash of milk or cream, salt and pepper, and pour over.",
-      "Cook on the stove 3 minutes until the edges set, then scatter cheese over.",
-      "Bake 12–15 minutes until just set in the middle. Rest 5 minutes before slicing.",
+      "Slice the potato thinly and fry in an oiled oven-proof pan for 8–10 minutes until nearly tender.",
+      "Beat the eggs with salt and pepper and pour them over the potato.",
+      "Cook on the stove 3 minutes until the edges set.",
+      "Bake 12–15 minutes until just set in the middle.",
+      "Rest 5 minutes before slicing into wedges.",
     ],
   }),
   R({
-    id: "noodle-soup",
+    id: "noodle-bowl",
     name: "Ten-minute noodle bowl",
     effort: "lazy",
     baseMinutes: 12,
-    core: ["noodle"],
-    bonus: ["egg", "stock", "chicken", "spinach", "carrot", "mushroom", "broccoli", "prawn", "cabbage"],
-    staples: ["soy sauce", "stock", "garlic"],
+    core: ["noodle", "egg"],
+    bonus: ["chicken", "spinach", "carrot", "mushroom", "broccoli", "cabbage", "soy sauce", "sriracha"],
     blurb: "Hot, savoury, in the bowl faster than delivery.",
     steps: [
-      "Bring stock (or water plus a stock cube and a splash of soy) to the boil.",
-      "Add any sliced veg and simmer 3 minutes.",
+      "Bring a pot of well-salted water to the boil with a splash of oil.",
       "Add the noodles and cook to packet time.",
-      "Slide in an egg to poach for the last 3 minutes if you'd like one.",
-      "Taste the broth and adjust with soy, pepper or a drop of vinegar.",
-      "Tip into a big bowl and eat while it's steaming.",
+      "Slide the eggs in to poach for the last 3 minutes, or fry them separately.",
+      "Ladle the noodles and a little of the cooking water into a big bowl.",
+      "Top with the eggs and plenty of pepper.",
+      "Eat while it's steaming.",
     ],
   }),
   R({
@@ -468,16 +473,15 @@ export const RECIPES: RecipeTemplate[] = [
     effort: "lazy",
     baseMinutes: 18,
     core: ["pasta", "tuna"],
-    bonus: ["tomato", "onion", "cheese", "spinach", "pea", "cream", "lemon", "garlic"],
-    staples: ["oil", "garlic", "salt"],
+    bonus: ["tomato", "onion", "cheese", "spinach", "pea", "lemon", "garlic", "caper"],
     blurb: "Nothing fresh in the house? This still works.",
     steps: [
-      "Boil the pasta in well-salted water.",
-      "Meanwhile, gently warm garlic in olive oil — don't let it brown.",
-      "Add the tuna (oil and all) and break it up with a spoon.",
-      "Add tomato or a splash of cream, plus a ladle of the pasta water.",
-      "Drain the pasta and toss it through the sauce for a minute so it grips.",
-      "Finish with cheese, pepper and lemon if you have it.",
+      "Boil the pasta in well-salted water and keep a mug of the water back.",
+      "Warm a good glug of oil in a pan over low heat.",
+      "Add the tuna, oil and all, and break it up with a spoon.",
+      "Add a ladle of the pasta water and let it come together into a loose sauce.",
+      "Toss the drained pasta through for a minute so it grips.",
+      "Finish with plenty of pepper and a pinch of salt.",
     ],
   }),
   R({
@@ -487,51 +491,31 @@ export const RECIPES: RecipeTemplate[] = [
     baseMinutes: 25,
     core: ["chickpea", "tomato"],
     bonus: ["spinach", "onion", "garlic", "cheese", "egg", "capsicum", "yoghurt", "bread"],
-    staples: ["oil", "garlic", "salt", "paprika"],
     blurb: "Cheap, filling and mostly from the cupboard.",
     steps: [
-      "Soften onion and garlic in olive oil for 5 minutes.",
-      "Add a big pinch of paprika or any spice you like and stir for 30 seconds.",
-      "Tip in the tomato and drained chickpeas, plus a splash of water.",
+      "Warm a good splash of oil in a wide pan.",
+      "Add the chopped tomato and cook down for 6–8 minutes until jammy.",
+      "Tip in the drained chickpeas with a splash of water.",
       "Simmer 12–15 minutes until thick and glossy.",
-      "Stir through greens, or crack eggs on top and cover until just set.",
-      "Season well and serve with bread, rice or yoghurt on the side.",
+      "Mash a few chickpeas against the pan to thicken the sauce.",
+      "Season hard with salt and pepper and serve in bowls.",
     ],
   }),
   R({
-    id: "roast-veg-bowl",
-    name: "Roast veg and grain bowl",
-    effort: "normal",
-    baseMinutes: 35,
-    core: ["pumpkin", "rice"],
-    bonus: ["chickpea", "sweet potato", "carrot", "spinach", "cheese", "yoghurt", "couscous", "halloumi"],
-    staples: ["oil", "salt", "lemon"],
-    blurb: "Roast hard, dress well, pile it into a bowl.",
-    steps: [
-      "Heat the oven to 220°C.",
-      "Cut the veg into chunks, toss with oil and salt and spread on a tray with room between pieces.",
-      "Roast 25–30 minutes until deeply caramelised at the edges.",
-      "Cook the rice or grain while the oven does its thing.",
-      "Mix yoghurt with lemon and a little salt for a quick dressing.",
-      "Pile grain, veg and greens into bowls and spoon the dressing over.",
-    ],
-  }),
-  R({
-    id: "sausage-lentil",
+    id: "sausage-braise",
     name: "Sausages with braised veg",
     effort: "normal",
     baseMinutes: 30,
-    core: ["sausage"],
-    bonus: ["potato", "onion", "carrot", "tomato", "bean", "cabbage", "stock", "mustard"],
-    staples: ["oil", "stock", "salt"],
+    core: ["sausage", "potato", "carrot"],
+    bonus: ["onion", "tomato", "bean", "cabbage", "gravy", "mustard"],
     blurb: "Proper hearty dinner from a pack of snags.",
     steps: [
-      "Brown the sausages all over in a wide pan, then set them aside.",
-      "In the same pan, cook onion and chopped veg for 6–8 minutes.",
-      "Add tomato or a mug of stock and scrape up the sticky bits.",
+      "Brown the sausages all over in a wide oiled pan, then set them aside.",
+      "Chop the potato and carrot small and cook in the same pan for 6–8 minutes.",
+      "Add a mug of water and scrape up the sticky bits.",
       "Return the sausages, cover and simmer 15 minutes.",
       "Check the sausages are cooked right through before serving.",
-      "Season, add a spoon of mustard if you have it, and serve.",
+      "Season with salt and pepper and serve.",
     ],
   }),
   R({
@@ -539,35 +523,33 @@ export const RECIPES: RecipeTemplate[] = [
     name: "Stovetop mac and cheese",
     effort: "lazy",
     baseMinutes: 20,
-    core: ["pasta", "cheese"],
-    bonus: ["cream cheese", "milk", "mustard", "flour", "onion", "parmesan", "jalapeno"],
-    staples: ["butter", "flour", "milk", "salt", "pepper"],
+    core: ["pasta", "cheese", "cream cheese"],
+    bonus: ["mustard", "milk", "onion", "jalapeno", "bacon"],
     blurb: "Pantry only. Cream cheese makes it silky without a white sauce.",
     steps: [
-      "Boil the macaroni in well-salted water until just tender, then drain, saving a mug of the water.",
-      "In the same pot, melt a knob of butter and stir in the cream cheese with a splash of the pasta water.",
-      "Add the grated cheese a handful at a time, stirring until smooth and glossy.",
-      "Stir in a small spoon of mustard (powder or wholegrain) — it sharpens the cheese right up.",
-      "Return the pasta and toss, loosening with more pasta water until it pours slowly off the spoon.",
-      "Season hard with salt and pepper. Chopped jalapeno on top if you like heat.",
+      "Boil the pasta in well-salted water until just tender, then drain, saving a mug of the water.",
+      "Back in the warm pot, stir the cream cheese with a splash of the pasta water until smooth.",
+      "Add the grated cheese a handful at a time, stirring until glossy.",
+      "Return the pasta and toss, loosening with more pasta water until the sauce pours slowly off the spoon.",
+      "Season hard with salt and plenty of pepper.",
+      "Serve straight away while it's still loose.",
     ],
   }),
   R({
     id: "sardine-pasta",
-    name: "Sardine and garlic pasta",
+    name: "Sardine pasta",
     effort: "lazy",
     baseMinutes: 18,
     core: ["pasta", "sardine"],
-    bonus: ["anchovy", "garlic", "parmesan", "lemon", "caper", "tomato", "onion"],
-    staples: ["olive oil", "garlic", "salt", "pepper"],
+    bonus: ["anchovy", "garlic", "cheese", "lemon", "caper", "tomato", "onion", "jalapeno"],
     blurb: "Cheap, savoury and entirely from the cupboard.",
     steps: [
       "Boil the pasta in well-salted water and keep a mug of the water back.",
-      "Warm plenty of olive oil in a pan with the minced garlic — gently, no browning.",
-      "Add the sardines (or anchovies) and break them up so they melt into the oil.",
-      "Add capers or a squeeze of lemon, plus a ladle of pasta water, and let it come together.",
+      "Warm plenty of oil in a pan over low heat.",
+      "Add the sardines and break them up so they melt into the oil.",
+      "Add a ladle of pasta water and let it come together.",
       "Toss the drained pasta through for a minute so the sauce grips.",
-      "Finish with parmesan and plenty of pepper.",
+      "Finish with lots of pepper.",
     ],
   }),
   R({
@@ -577,33 +559,31 @@ export const RECIPES: RecipeTemplate[] = [
     baseMinutes: 15,
     core: ["corn chip", "cheese"],
     bonus: ["bean", "lentil", "avocado", "jalapeno", "tomato", "yoghurt", "onion", "beef mince"],
-    staples: ["oil", "salt", "paprika"],
     blurb: "Half a bag of chips is a dinner if you treat it like one.",
     steps: [
       "Heat the oven to 200°C and spread the corn chips on a lined tray.",
-      "Warm the lentils or beans in a pan with a pinch of paprika and any spices you like.",
-      "Spoon the mix over the chips, leaving some chips bare so they stay crisp.",
-      "Scatter the cheese over and bake 8–10 minutes until melted.",
-      "Top with mashed avocado, sliced pickled onion, jalapeno and a dollop of yoghurt.",
-      "Eat straight off the tray while it's hot.",
+      "Scatter the cheese over, leaving a few chips bare so they stay crisp.",
+      "Bake 8–10 minutes until the cheese has melted.",
+      "Crack a little pepper over the top.",
+      "Slide it onto a board or leave it on the tray.",
+      "Eat while it's hot.",
     ],
   }),
   R({
     id: "simmer-sauce-rice",
-    name: "Jar-sauce chicken over rice",
+    name: "Jar-sauce dinner over rice",
     effort: "lazy",
     baseMinutes: 25,
     core: ["simmer sauce", "rice"],
-    bonus: ["chicken", "onion", "carrot", "capsicum", "pea", "lentil", "yoghurt", "spinach"],
-    staples: ["oil", "salt"],
+    bonus: ["chicken", "onion", "carrot", "capsicum", "pea", "lentil", "spinach", "chickpea"],
     blurb: "A jar in the cupboard is a perfectly good weeknight dinner.",
     steps: [
       "Start the rice so it's ready when the pan is.",
-      "Brown the onion and any protein in a little oil for 5–6 minutes.",
-      "Add any harder veg and cook another 3 minutes.",
+      "Heat a little oil in a wide pan.",
       "Pour in the jar of sauce, swill the jar with a splash of water and add that too.",
-      "Simmer 12–15 minutes until thickened and any chicken is cooked right through (75°C).",
-      "Stir in greens at the end and spoon over the rice.",
+      "Simmer 12–15 minutes until thickened. If you've added meat, check it's cooked right through (75°C).",
+      "Season with salt and pepper to taste.",
+      "Spoon it over the rice.",
     ],
   }),
   R({
@@ -612,52 +592,66 @@ export const RECIPES: RecipeTemplate[] = [
     effort: "lazy",
     baseMinutes: 12,
     core: ["oat", "egg"],
-    bonus: ["cheese", "parmesan", "spinach", "onion", "soy sauce", "avocado", "stock", "jalapeno"],
-    staples: ["stock", "butter", "salt", "pepper"],
+    bonus: ["cheese", "spinach", "onion", "soy sauce", "avocado", "jalapeno", "sriracha"],
     blurb: "Like a fast risotto. Sounds odd, tastes great.",
     steps: [
-      "Bring a mug and a half of stock (or water plus a stock cube) to a simmer.",
+      "Bring a mug and a half of well-salted water to a simmer per person.",
       "Stir in the oats and cook 4–5 minutes until thick and creamy.",
-      "Beat in cheese or parmesan and a knob of butter, off the heat.",
-      "Fry or poach the eggs while the oats sit.",
-      "Wilt any greens through the oats, then spoon into bowls.",
-      "Top with the eggs, a splash of soy or sriracha, and plenty of pepper.",
+      "Fry or poach the eggs in a little oil while the oats sit.",
+      "Season the oats properly with salt and pepper.",
+      "Spoon the oats into bowls and top with the eggs.",
+      "Crack more pepper over and eat straight away.",
     ],
   }),
   R({
     id: "steak-peas",
-    name: "Pan steak with buttery peas",
+    name: "Pan steak with crushed peas",
     effort: "normal",
     baseMinutes: 22,
     core: ["steak", "pea"],
-    bonus: ["potato", "onion", "mushroom", "gravy", "garlic", "cheese", "rice", "horseradish"],
-    staples: ["oil", "butter", "salt", "pepper"],
+    bonus: ["potato", "onion", "mushroom", "gravy", "garlic", "horseradish", "mustard", "rice"],
     blurb: "Cook the steak properly and the sides can be dead simple.",
     steps: [
       "Take the steak out of the fridge, pat it dry and salt both sides generously.",
       "Get a heavy pan smoking hot with a little oil. Lay the steak in and don't touch it for 2–3 minutes.",
-      "Flip once, add a knob of butter and any garlic, and spoon the foaming butter over for another 2–3 minutes.",
+      "Flip once and cook another 2–3 minutes for medium.",
       "Rest the steak on a warm plate for at least 5 minutes — this is not optional.",
-      "Meanwhile, simmer the peas 3 minutes, drain, then crush lightly with butter, salt and pepper.",
-      "Make up the gravy with the pan juices stirred in, slice the steak across the grain and serve.",
+      "Meanwhile, simmer the peas in salted water for 3 minutes, drain, then crush lightly with a splash of oil, salt and pepper.",
+      "Slice the steak across the grain and serve on the peas.",
     ],
   }),
   R({
-    id: "chicken-pea-fry",
+    id: "chicken-pea-skillet",
     name: "Chicken and pea skillet",
     effort: "lazy",
     baseMinutes: 20,
     core: ["chicken", "pea"],
-    bonus: ["cream cheese", "onion", "rice", "pasta", "garlic", "cheese", "stock", "curry powder"],
-    staples: ["oil", "salt", "pepper"],
+    bonus: ["cream cheese", "onion", "rice", "pasta", "garlic", "cheese", "curry powder", "mustard"],
     blurb: "Odds and ends of chicken plus frozen peas — a full dinner in one pan.",
     steps: [
       "Cut the chicken into small even pieces and season with salt and pepper.",
       "Brown it in a hot oiled pan for 5–6 minutes without crowding the pan.",
-      "Add the onion and garlic and cook 2 minutes until fragrant.",
-      "Stir in the cream cheese with a splash of water or stock to make a loose sauce.",
-      "Tip in the frozen peas straight from the bag and simmer 4–5 minutes until the chicken is cooked through (75°C).",
-      "Taste, season again, and serve over rice or pasta.",
+      "Add a splash of water and scrape up the sticky bits into a light sauce.",
+      "Tip in the peas straight from the bag and simmer 4–5 minutes.",
+      "Check the chicken is cooked right through (75°C in the thickest piece).",
+      "Taste, season again, and serve.",
+    ],
+  }),
+  R({
+    id: "egg-sanga",
+    name: "Proper fried egg sanga",
+    effort: "lazy",
+    baseMinutes: 10,
+    core: ["bread", "egg"],
+    bonus: ["cheese", "tomato sauce", "avocado", "bacon", "spinach", "tomato", "mustard"],
+    blurb: "Ten minutes, two ingredients, no complaints.",
+    steps: [
+      "Heat a little oil in a pan over medium-high heat.",
+      "Fry the eggs to your liking — season them with salt and pepper in the pan.",
+      "Toast or warm the bread while the eggs cook.",
+      "Pile the eggs onto the bread.",
+      "Crack a bit more pepper over the top.",
+      "Close it up, cut in half and eat over the sink.",
     ],
   }),
 ];
@@ -668,6 +662,87 @@ export function servingsFor(people: string): number {
   return people === "5+" ? 5 : Number(people) || 2;
 }
 
+/** Rough per-serve amounts so the cook screen shows a usable recipe. */
+type Qty = { per: number; unit: string; each?: boolean; step?: number };
+
+const QUANTITIES: Record<string, Qty> = {
+  chicken: { per: 180, unit: "g" },
+  steak: { per: 200, unit: "g" },
+  "beef mince": { per: 150, unit: "g" },
+  sausage: { per: 2, unit: "", each: true },
+  bacon: { per: 1, unit: "rasher", each: true },
+  tuna: { per: 0.5, unit: "tin" },
+  sardine: { per: 0.5, unit: "tin" },
+  anchovy: { per: 2, unit: "fillet", each: true },
+  prawn: { per: 120, unit: "g" },
+  egg: { per: 2, unit: "", each: true },
+  rice: { per: 0.5, unit: "cup" },
+  pasta: { per: 100, unit: "g" },
+  noodle: { per: 100, unit: "g" },
+  couscous: { per: 0.4, unit: "cup" },
+  oat: { per: 0.5, unit: "cup" },
+  bread: { per: 2, unit: "slice", each: true },
+  tortilla: { per: 2, unit: "", each: true },
+  "corn chip": { per: 80, unit: "g" },
+  potato: { per: 1.5, unit: "", each: true },
+  "sweet potato": { per: 1, unit: "", each: true },
+  carrot: { per: 1, unit: "", each: true },
+  onion: { per: 0.5, unit: "", each: true },
+  tomato: { per: 1.5, unit: "", each: true },
+  capsicum: { per: 0.5, unit: "", each: true },
+  zucchini: { per: 0.5, unit: "", each: true },
+  mushroom: { per: 60, unit: "g" },
+  broccoli: { per: 0.5, unit: "head" },
+  cabbage: { per: 100, unit: "g" },
+  pumpkin: { per: 200, unit: "g" },
+  celery: { per: 1, unit: "stick", each: true },
+  spinach: { per: 2, unit: "handful", each: true },
+  pea: { per: 0.5, unit: "cup" },
+  bean: { per: 0.5, unit: "tin" },
+  chickpea: { per: 0.5, unit: "tin" },
+  lentil: { per: 0.5, unit: "tin" },
+  avocado: { per: 0.5, unit: "", each: true },
+  cheese: { per: 40, unit: "g" },
+  "cream cheese": { per: 1.5, unit: "tbsp" },
+  cream: { per: 60, unit: "ml" },
+  milk: { per: 60, unit: "ml" },
+  yoghurt: { per: 2, unit: "tbsp" },
+  halloumi: { per: 60, unit: "g" },
+  garlic: { per: 1, unit: "clove", each: true },
+  "curry powder": { per: 0.5, unit: "tbsp" },
+  "simmer sauce": { per: 0.5, unit: "jar" },
+  "soy sauce": { per: 1, unit: "tbsp" },
+  sriracha: { per: 1, unit: "tsp" },
+  "tomato sauce": { per: 1, unit: "tbsp" },
+  mustard: { per: 1, unit: "tsp" },
+  gravy: { per: 1, unit: "tbsp" },
+  jalapeno: { per: 1, unit: "", each: true },
+  lemon: { per: 0.25, unit: "", each: true },
+  caper: { per: 1, unit: "tsp" },
+  flour: { per: 1, unit: "tbsp" },
+};
+
+function tidy(n: number): string {
+  if (n >= 10) return String(Math.round(n / 5) * 5);
+  const rounded = Math.round(n * 2) / 2;
+  if (Number.isInteger(rounded)) return String(rounded);
+  if (rounded === 0.5) return "½";
+  return String(rounded).replace(".5", "½");
+}
+
+/** A pragmatic, visible amount for one ingredient at a given serving count. */
+export function amountFor(item: string, servings: number): string {
+  const q = QUANTITIES[item] ?? Object.entries(QUANTITIES).find(([k]) => item.includes(k))?.[1];
+  if (!q) return `enough ${item} for ${servings}`;
+  const total = q.per * servings;
+  const amount = tidy(total);
+  if (q.each) {
+    const unit = q.unit ? ` ${q.unit}${total >= 2 && q.unit ? "s" : ""}` : "";
+    return `${amount}${unit} ${item}`;
+  }
+  return `${amount} ${q.unit} ${item}`.replace(/\s+/g, " ");
+}
+
 export function generateSuggestions(input: RescueInput): Suggestion[] {
   const have = input.ingredients;
   const avoid = parseIngredients(input.avoid || "");
@@ -675,40 +750,32 @@ export function generateSuggestions(input: RescueInput): Suggestion[] {
   const servings = servingsFor(input.people);
 
   const scored = RECIPES.map((recipe) => {
-    const all = [...recipe.core, ...recipe.bonus];
-    const used = have.filter((h) => all.some((item) => item.includes(h) || h.includes(item)));
-    const missing = recipe.core.filter((item) => !matches(have, item));
+    // STRICT: every core ingredient must be on hand. Nothing is ever "missing".
+    const cookable = recipe.core.every((c) => has(have, c));
+    const extras = recipe.bonus.filter((b) => has(have, b));
 
-    let score = 0;
-    score += recipe.core.filter((c) => matches(have, c)).length * 30;
-    score += recipe.bonus.filter((b) => matches(have, b)).length * 9;
-    score -= missing.length * 34; // strongly favour no-shop options
-    score += useUp.filter((u) => matches(all, u)).length * 25;
+    const blocked = avoid.some(
+      (a) => a.length > 2 && [...recipe.core, ...extras].some((i) => i.includes(a) || a.includes(i)),
+    );
+
+    let score = recipe.core.length * 30 + extras.length * 9;
+    score += useUp.filter((u) => [...recipe.core, ...extras].some((i) => i.includes(u) || u.includes(i))).length * 25;
     score -= Math.abs(EFFORT_ORDER[recipe.effort] - EFFORT_ORDER[input.effort]) * 12;
-
-    const blocked = avoid.some((a) => a.length > 2 && all.some((item) => item.includes(a) || a.includes(item)));
 
     const minutes =
       recipe.baseMinutes + (servings >= 4 ? 5 : 0) + (input.effort === "lazy" && recipe.effort === "keen" ? 5 : 0);
 
-    return { recipe, score, used, missing, minutes, servings, blocked };
+    return { recipe, score, used: recipe.core, extras, minutes, servings, cookable, blocked };
   })
-    .filter((s) => !s.blocked && s.used.length > 0)
-    .sort((a, b) => b.score - a.score || a.minutes - b.minutes);
-
-  // Only genuinely plausible matches — never pad with unrelated filler recipes.
-  const picked = scored
-    .filter((s) => {
-      const coreHits = s.recipe.core.filter((c) => matches(have, c)).length;
-      return coreHits >= 1 && (coreHits === s.recipe.core.length || s.used.length >= 2);
-    })
+    .filter((s) => s.cookable && !s.blocked)
+    .sort((a, b) => b.score - a.score || a.minutes - b.minutes)
     .slice(0, 3);
 
-  return picked.map(({ recipe, score, used, missing, minutes }) => ({
+  return scored.map(({ recipe, score, used, extras, minutes }) => ({
     recipe,
     score,
     used,
-    missing,
+    extras,
     minutes,
     servings,
   }));
