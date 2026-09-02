@@ -1,14 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Camera,
   Check,
   ChefHat,
   Clock,
+  Loader2,
   Mic,
   Plus,
   Sparkles,
+  Square,
   Trash2,
   Users,
   Utensils,
@@ -18,17 +20,11 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { PrototypeFooter } from "@/components/PrototypeFooter";
-import {
-  amountFor,
-  generateSuggestions,
-  parseIngredients,
-  UNIVERSAL_BASICS,
-  type Effort,
-  type Suggestion,
-} from "@/lib/recipes";
+import { generateDinners } from "@/lib/dinner.functions";
+import type { DinnerOption, DinnerResult, Effort } from "@/lib/dinner-types";
 import { recordFeedback, recordSelection, recordSession } from "@/lib/tester-store";
 import { clearDraft, readDraft, writeDraft } from "@/lib/draft-store";
-import { useSpeechInput } from "@/hooks/useSpeechInput";
+import { useKitchenRecorder } from "@/hooks/useKitchenRecorder";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -77,9 +73,10 @@ function DinnerRescue() {
   const [useUp, setUseUp] = useState("");
   const [showOptional, setShowOptional] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [result, setResult] = useState<DinnerResult | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [chosen, setChosen] = useState<Suggestion | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<DinnerOption | null>(null);
   const [tags, setTags] = useState<string[]>([]);
   const [comment, setComment] = useState("");
   const [done, setDone] = useState(false);
@@ -105,13 +102,11 @@ function DinnerRescue() {
     writeDraft({ raw, removed: [], people, effort, avoid, useUp });
   }, [hydrated, raw, people, effort, avoid, useUp]);
 
-  const ingredients = useMemo(() => parseIngredients(raw), [raw]);
-
   const appendSpeech = useCallback((text: string) => {
-    setRaw((prev) => (prev.trim() ? `${prev.replace(/\s*$/, "")}, ${text}` : text));
+    setRaw((prev) => (prev.trim() ? `${prev.replace(/\s*$/, "")} ${text}` : text));
   }, []);
 
-  const speech = useSpeechInput(appendSpeech);
+  const recorder = useKitchenRecorder(appendSpeech);
 
   function start() {
     recordSession();
@@ -119,22 +114,29 @@ function DinnerRescue() {
   }
 
   function finishTalking() {
-    if (speech.listening) speech.stop();
     setStep("choices");
   }
 
-  const rescue = useCallback(() => {
-    const started = performance.now();
+  const rescue = useCallback(async () => {
+    setAiError(null);
     setGenerating(true);
-    const next = generateSuggestions({ ingredients, people, effort, avoid, useUp });
-    setSuggestions(next);
     setStep("results");
-    if (performance.now() - started > 500) {
-      setTimeout(() => setGenerating(false), 0);
-    } else {
+    try {
+      const next = await generateDinners({
+        data: { transcript: raw, people, effort, avoid, useUp },
+      });
+      setResult(next);
+    } catch (error) {
+      setResult(null);
+      setAiError(
+        error instanceof Error && error.message
+          ? error.message
+          : "I couldn't think of dinners just then. Give it another go.",
+      );
+    } finally {
       setGenerating(false);
     }
-  }, [ingredients, people, effort, avoid, useUp]);
+  }, [raw, people, effort, avoid, useUp]);
 
   function addExtra() {
     const text = extra.trim();
@@ -147,19 +149,20 @@ function DinnerRescue() {
     setRaw("");
     setExtra("");
     setRestored(false);
+    setResult(null);
     clearDraft();
   }
 
-  function choose(s: Suggestion) {
-    setChosen(s);
-    recordSelection(s.recipe.id, s.recipe.name);
+  function choose(option: DinnerOption) {
+    setChosen(option);
+    recordSelection(option.id, option.name);
     setStep("cook");
   }
 
   function submitFeedback() {
     recordFeedback({
-      recipeId: chosen?.recipe.id ?? "none",
-      recipeName: chosen?.recipe.name ?? "None selected",
+      recipeId: chosen?.id ?? "none",
+      recipeName: chosen?.name ?? "None selected",
       tags,
       comment: comment.trim(),
     });
@@ -174,13 +177,15 @@ function DinnerRescue() {
     setDone(false);
   }
 
+  const options = result?.options ?? [];
+
   return (
     <div className="page-warm flex min-h-screen flex-col">
       <main className="mx-auto w-full max-w-xl flex-1 px-5 pb-4 pt-6">
         {step === "welcome" && (
           <Welcome
             onStart={start}
-            canResume={restored && ingredients.length > 0}
+            canResume={restored && raw.trim().length > 1}
             onResume={() => setStep("choices")}
           />
         )}
@@ -188,44 +193,61 @@ function DinnerRescue() {
         {step === "talk" && (
           <Screen title="Tell me what you've got" onBack={() => setStep("welcome")}>
             <p className="text-base leading-relaxed">
-              Tap the button, then just talk. Wander between the fridge, freezer and pantry — take as
-              long as you like. Tap <strong>Done</strong> when you're finished.
+              Tap the button, then just talk. Wander between the fridge, freezer and pantry — pause
+              as long as you like, it keeps listening. Tap <strong>Done</strong> when you're
+              finished.
             </p>
 
-            {speech.supported ? (
+            {recorder.supported ? (
               <div className="mt-6">
                 <button
                   type="button"
-                  onClick={speech.listening ? undefined : speech.start}
-                  aria-label="Tell me what you've got"
-                  aria-pressed={speech.listening}
-                  className={`grid aspect-square w-full max-w-xs mx-auto place-items-center rounded-full border-4 transition-colors ${
-                    speech.listening
+                  onClick={
+                    recorder.phase === "recording"
+                      ? recorder.stop
+                      : recorder.phase === "idle"
+                        ? recorder.start
+                        : undefined
+                  }
+                  aria-label={
+                    recorder.phase === "recording" ? "Done talking" : "Tell me what you've got"
+                  }
+                  aria-pressed={recorder.phase === "recording"}
+                  disabled={recorder.phase === "transcribing"}
+                  className={`mx-auto grid aspect-square w-full max-w-xs place-items-center rounded-full border-4 transition-colors ${
+                    recorder.phase === "recording"
                       ? "animate-pulse border-primary bg-primary/15"
                       : "border-primary bg-primary text-primary-foreground shadow-[var(--shadow-soft)]"
                   }`}
                 >
                   <span className="flex flex-col items-center gap-3 px-6 text-center">
-                    <Mic className="size-16" aria-hidden />
+                    {recorder.phase === "recording" ? (
+                      <Square className="size-14" aria-hidden />
+                    ) : recorder.phase === "transcribing" ? (
+                      <Loader2 className="size-14 animate-spin" aria-hidden />
+                    ) : (
+                      <Mic className="size-16" aria-hidden />
+                    )}
                     <span className="text-xl font-semibold">
-                      {speech.listening ? "Listening…" : "Tell me what you've got"}
+                      {recorder.phase === "recording"
+                        ? `Listening… ${formatClock(recorder.seconds)}`
+                        : recorder.phase === "transcribing"
+                          ? "Writing it down…"
+                          : "Tell me what you've got"}
                     </span>
                   </span>
                 </button>
 
                 <p className="mt-4 text-center text-base leading-relaxed" aria-live="polite">
-                  {speech.listening
-                    ? "Listening… take your time. Open the fridge, freezer or pantry. Tap Done when you're finished."
-                    : "Or type it in below if you'd rather."}
+                  {recorder.phase === "recording"
+                    ? "Take your time — silence is fine. Tap Done when you're finished."
+                    : recorder.phase === "transcribing"
+                      ? "One moment while I write down everything you said."
+                      : "Or type it in below if you'd rather."}
                 </p>
-                {speech.listening && speech.interim && (
-                  <p className="mt-2 text-center text-sm italic text-muted-foreground">
-                    {speech.interim}
-                  </p>
-                )}
 
-                {speech.listening && (
-                  <Button variant="hero" size="xl" className="mt-5 w-full" onClick={finishTalking}>
+                {recorder.phase === "recording" && (
+                  <Button variant="hero" size="xl" className="mt-5 w-full" onClick={recorder.stop}>
                     <Check aria-hidden /> Done
                   </Button>
                 )}
@@ -233,20 +255,20 @@ function DinnerRescue() {
             ) : (
               <p className="mt-5 rounded-xl border border-dashed border-border bg-muted/60 p-4 text-base text-muted-foreground">
                 <Mic className="mr-1 inline size-4" aria-hidden />
-                This browser can't listen directly, but the microphone key on your phone keyboard
+                This browser can't record directly, but the microphone key on your phone keyboard
                 works a treat — tap the box below, then the mic on your keyboard.
               </p>
             )}
 
-            {speech.error && (
+            {recorder.error && (
               <p role="alert" className="mt-3 text-sm font-medium text-destructive">
-                {speech.error}
+                {recorder.error}
               </p>
             )}
 
-            {(!speech.supported || !speech.listening) && (
+            {recorder.phase === "idle" && (
               <div className="mt-6">
-                {speech.supported && raw.trim() !== "" && (
+                {recorder.supported && raw.trim() !== "" && (
                   <button
                     type="button"
                     onClick={() => setShowTranscript((v) => !v)}
@@ -256,7 +278,7 @@ function DinnerRescue() {
                     {showTranscript ? "Hide what I've got so far" : "Show what I've got so far"}
                   </button>
                 )}
-                {(!speech.supported || showTranscript || raw.trim() === "") && (
+                {(!recorder.supported || showTranscript || raw.trim() === "") && (
                   <>
                     <label htmlFor="ing" className="block font-medium">
                       Type or tidy your list
@@ -266,7 +288,7 @@ function DinnerRescue() {
                       value={raw}
                       onChange={(e) => setRaw(e.target.value)}
                       rows={5}
-                      placeholder="chicken thighs, carrots, frozen peas, eggs, rice"
+                      placeholder="chicken thighs, carrots, frozen peas, Greek yoghurt, garlic, rice"
                       className="mt-2 min-h-32 rounded-xl bg-card p-4 text-base leading-relaxed shadow-[var(--shadow-soft)]"
                     />
                     {raw.trim() !== "" && (
@@ -304,7 +326,7 @@ function DinnerRescue() {
               </span>
             </button>
 
-            {!speech.listening && (
+            {recorder.phase === "idle" && (
               <Button
                 variant="hero"
                 size="xl"
@@ -315,7 +337,7 @@ function DinnerRescue() {
                 <Check aria-hidden /> Done — that's everything
               </Button>
             )}
-            {raw.trim().length < 2 && (
+            {raw.trim().length < 2 && recorder.phase === "idle" && (
               <p className="mt-2 text-center text-sm text-muted-foreground">
                 Tell me at least one thing you've got.
               </p>
@@ -417,7 +439,7 @@ function DinnerRescue() {
               variant="hero"
               size="xl"
               className="mt-7 w-full"
-              disabled={ingredients.length === 0 || generating}
+              disabled={raw.trim().length < 2 || generating}
               onClick={rescue}
             >
               {generating ? (
@@ -433,11 +455,40 @@ function DinnerRescue() {
 
         {step === "results" && (
           <Screen
-            title={suggestions.length > 0 ? "What you can cook tonight" : "Not quite there yet"}
+            title={
+              generating
+                ? "Thinking about dinner"
+                : options.length > 0
+                  ? "What you can cook tonight"
+                  : "Not quite there yet"
+            }
             onBack={() => setStep("choices")}
           >
-            {suggestions.length === 0 ? (
-              <NoDinners onAddMore={() => setStep("talk")} />
+            {generating ? (
+              <div className="card-soft grid place-items-center gap-3 p-10 text-center">
+                <Loader2 className="size-8 animate-spin text-primary" aria-hidden />
+                <p className="text-base" aria-live="polite">
+                  Working out what goes together from your list…
+                </p>
+              </div>
+            ) : aiError ? (
+              <section className="mt-2 rounded-2xl border-2 border-destructive/40 bg-card p-5">
+                <h2 className="text-lg">That didn't work</h2>
+                <p className="mt-2 text-base leading-relaxed text-muted-foreground">{aiError}</p>
+                <Button variant="hero" size="xl" className="mt-4 w-full" onClick={rescue}>
+                  Try again
+                </Button>
+                <Button
+                  variant="warm"
+                  size="xl"
+                  className="mt-3 w-full"
+                  onClick={() => setStep("talk")}
+                >
+                  <Mic aria-hidden /> Change my list
+                </Button>
+              </section>
+            ) : options.length === 0 ? (
+              <NoDinners message={result?.message} onAddMore={() => setStep("talk")} />
             ) : (
               <>
                 <p className="text-sm text-muted-foreground">
@@ -445,8 +496,12 @@ function DinnerRescue() {
                   {people === "5+" ? "5 or more" : people} {people === "1" ? "person" : "people"}.
                 </p>
                 <div className="mt-4 space-y-4">
-                  {suggestions.map((s) => (
-                    <SuggestionCard key={s.recipe.id} s={s} onChoose={() => choose(s)} />
+                  {options.map((option) => (
+                    <SuggestionCard
+                      key={option.id}
+                      option={option}
+                      onChoose={() => choose(option)}
+                    />
                   ))}
                 </div>
                 <Button
@@ -470,7 +525,7 @@ function DinnerRescue() {
         )}
 
         {step === "cook" && chosen && (
-          <Screen title={chosen.recipe.name} onBack={() => setStep("results")}>
+          <Screen title={chosen.name} onBack={() => setStep("results")}>
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <Chip icon={<Clock className="size-3.5" aria-hidden />}>
                 About {chosen.minutes} min
@@ -483,31 +538,21 @@ function DinnerRescue() {
             <section className="card-soft mt-5 p-5">
               <h2 className="text-lg">What you'll use</h2>
               <ul className="mt-3 space-y-2">
-                {chosen.used.map((i) => (
-                  <li key={i} className="flex gap-2 text-base">
+                {chosen.ingredients.map((ing) => (
+                  <li key={`${ing.item}-${ing.quantity}`} className="flex gap-2 text-base">
                     <Check className="mt-1 size-4 shrink-0 text-success" aria-hidden />
-                    <span className="first-letter:uppercase">{amountFor(i, chosen.servings)}</span>
-                  </li>
-                ))}
-                {chosen.extras.map((i) => (
-                  <li key={i} className="flex gap-2 text-base">
-                    <Plus className="mt-1 size-4 shrink-0 text-muted-foreground" aria-hidden />
                     <span className="first-letter:uppercase">
-                      {amountFor(i, chosen.servings)}{" "}
-                      <span className="text-muted-foreground">(optional, you've got it)</span>
+                      {ing.quantity} {ing.item}
                     </span>
                   </li>
                 ))}
               </ul>
-              <p className="mt-3 text-sm text-muted-foreground">
-                Plus the basics every kitchen has: {UNIVERSAL_BASICS.join(", ")}.
-              </p>
             </section>
 
             <section className="mt-6">
               <h2 className="text-lg">Let's cook</h2>
               <ol className="mt-3 space-y-3">
-                {chosen.recipe.steps.map((s, idx) => (
+                {chosen.steps.map((s, idx) => (
                   <li key={idx} className="card-soft flex gap-4 p-4">
                     <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-base font-semibold text-primary-foreground">
                       {idx + 1}
@@ -612,15 +657,21 @@ function DinnerRescue() {
   );
 }
 
-function NoDinners({ onAddMore }: { onAddMore: () => void }) {
+function formatClock(seconds: number) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function NoDinners({ message, onAddMore }: { message?: string; onAddMore: () => void }) {
   return (
     <section className="mt-2 rounded-2xl border-2 border-primary/30 bg-warm p-5">
       <h2 className="text-lg text-warm-foreground">
         I can't make a proper dinner from that list yet.
       </h2>
       <p className="mt-2 text-base leading-relaxed text-warm-foreground/90">
-        I'd rather say so than send you shopping. Tell me anything else you've got — I'll keep
-        everything you've already said.
+        {message ??
+          "I'd rather say so than serve you something miserable. Tell me anything else you've got — I'll keep everything you've already said."}
       </p>
       <Button variant="hero" size="xl" className="mt-4 w-full" onClick={onAddMore}>
         <Mic aria-hidden /> Tell me anything I forgot
@@ -717,7 +768,13 @@ function Chip({ icon, children }: { icon?: React.ReactNode; children: React.Reac
   );
 }
 
-function SuggestionCard({ s, onChoose }: { s: Suggestion; onChoose: () => void }) {
+function SuggestionCard({
+  option,
+  onChoose,
+}: {
+  option: DinnerOption;
+  onChoose: () => void;
+}) {
   return (
     <article className="card-soft lift-hover overflow-hidden">
       <div className="p-5">
@@ -725,15 +782,18 @@ function SuggestionCard({ s, onChoose }: { s: Suggestion; onChoose: () => void }
           <span className="inline-flex items-center gap-1.5 rounded-full bg-success px-3 py-1.5 text-sm font-semibold text-success-foreground">
             <Check className="size-4" aria-hidden /> You've got everything
           </span>
-          <Chip icon={<Clock className="size-3.5" aria-hidden />}>{s.minutes} min</Chip>
+          <Chip icon={<Clock className="size-3.5" aria-hidden />}>{option.minutes} min</Chip>
         </div>
-        <h2 className="mt-3 text-xl leading-snug">{s.recipe.name}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">{s.recipe.blurb}</p>
+        <h2 className="mt-3 text-xl leading-snug">{option.name}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{option.description}</p>
 
         <p className="mt-3 text-sm">
           <span className="font-semibold">Uses your:</span>{" "}
           <span className="text-muted-foreground">
-            {[...s.used, ...s.extras].slice(0, 6).join(", ")}
+            {option.ingredients
+              .map((i) => i.item)
+              .slice(0, 6)
+              .join(", ")}
           </span>
         </p>
 
