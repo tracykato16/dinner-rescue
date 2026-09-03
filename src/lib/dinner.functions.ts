@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 
-import { validateOptions } from "./dinner-validate";
+import { validateAgainstTranscript } from "./dinner-validate";
 import type { DinnerOption, DinnerResult } from "./dinner-types";
 
 const SYSTEM = `You are Dinner Rescue, a practical skilled home cook in Australia.
