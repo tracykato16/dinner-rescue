@@ -663,7 +663,13 @@ function formatClock(seconds: number) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function NoDinners({ message, onAddMore }: { message?: string; onAddMore: () => void }) {
+function NoDinners({
+  message,
+  onAddMore,
+}: {
+  message?: string | undefined;
+  onAddMore: () => void;
+}) {
   return (
     <section className="mt-2 rounded-2xl border-2 border-primary/30 bg-warm p-5">
       <h2 className="text-lg text-warm-foreground">

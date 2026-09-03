@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 
-import { validateOptions } from "./dinner-validate";
+import { validateAgainstTranscript } from "./dinner-validate";
 import type { DinnerOption, DinnerResult } from "./dinner-types";
 
 const SYSTEM = `You are Dinner Rescue, a practical skilled home cook in Australia.
@@ -136,12 +136,22 @@ export const generateDinners = createServerFn({ method: "POST" })
       throw new Error("I couldn't think of dinners just then. Give it another go.");
     }
 
-    const inventory = (parsed.inventory ?? []).map((i) => String(i).trim()).filter(Boolean);
+    const claimed = (parsed.inventory ?? []).map((i) => String(i).trim()).filter(Boolean);
     const raw = (parsed.options ?? []).map((o, idx) => ({ ...o, id: `opt-${idx + 1}` }));
-    const options = validateOptions(raw as DinnerOption[], inventory).slice(0, 3);
+
+    // The raw transcript — not the AI's own inventory claim — is the source of truth.
+    const checked = validateAgainstTranscript(
+      raw as DinnerOption[],
+      claimed,
+      data.transcript,
+    );
+    if (checked.rejectedInventory.length > 0) {
+      console.warn("ungrounded inventory discarded", checked.rejectedInventory);
+    }
+    const options = checked.options.slice(0, 3);
 
     return {
-      inventory,
+      inventory: checked.inventory,
       options,
       ...(options.length === 0
         ? {
