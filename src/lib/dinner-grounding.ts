@@ -143,15 +143,63 @@ function words(text: string): string[] {
     .filter(Boolean);
 }
 
-/** All meaningful stems present in the raw transcript. */
+/**
+ * The single universal assumption: ordinary tap water. Nobody should have to say
+ * they have water, so it is always grounded — nothing else is.
+ */
+const UNIVERSAL = ["water"];
+
+/**
+ * Detects an explicit broad category permission such as "herbs and spices",
+ * "the usual spices" or "seasoning". Fresh herbs are NOT covered — this is dry
+ * herbs, dry spices and basic seasoning only.
+ */
+export function hasSeasoningPermission(transcript: string): boolean {
+  return /\b(herbs?|spices?|seasonings?|seasoned)\b/i.test(transcript);
+}
+
+/**
+ * Conservative, culinary set unlocked by an explicit herbs/spices/seasoning
+ * category. Deliberately dry-store only: no oil, fat, stock, dairy, fresh
+ * aromatics or sauces.
+ */
+const SEASONING_CATEGORY = [
+  "salt",
+  "pepper",
+  "seasoning",
+  "herb",
+  "spice",
+  "paprika",
+  "cumin",
+  "coriander",
+  "oregano",
+  "thyme",
+  "rosemary",
+  "cinnamon",
+  "turmeric",
+  "curry",
+  "chilli",
+  "chili",
+  "bay",
+  "nutmeg",
+  "ginger",
+  "mustard",
+];
+
+/** All meaningful stems present in the raw transcript, plus water. */
 export function transcriptStems(transcript: string): Set<string> {
   const set = new Set<string>();
   for (const word of words(transcript)) {
     if (word.length < 3 || NOISE.has(word)) continue;
     set.add(stem(word));
   }
+  for (const w of UNIVERSAL) set.add(stem(w));
+  if (hasSeasoningPermission(transcript)) {
+    for (const w of SEASONING_CATEGORY) set.add(stem(w));
+  }
   return set;
 }
+
 
 /** Content stems of a phrase, with noise/qualifier words dropped. */
 function phraseStems(phrase: string): string[] {
