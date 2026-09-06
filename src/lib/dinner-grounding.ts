@@ -182,8 +182,6 @@ const SEASONING_CATEGORY = [
   "chili",
   "bay",
   "nutmeg",
-  "ginger",
-  "mustard",
 ];
 
 /** All meaningful stems present in the raw transcript, plus water. */
