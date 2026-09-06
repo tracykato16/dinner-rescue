@@ -60,7 +60,6 @@ describe("grounding against the raw transcript", () => {
   it("rejects anything unspoken, including basics", () => {
     const spoken = transcriptStems(TRANSCRIPT);
     for (const item of [
-      "water",
       "oil",
       "olive oil",
       "salt",
@@ -123,11 +122,10 @@ describe("validateAgainstTranscript", () => {
     expect(result.options).toHaveLength(1);
   });
 
-  it("discards an option whose steps smuggle in salt, oil or water", () => {
+  it("allows water but discards an option whose steps smuggle in salt or oil", () => {
     for (const step of [
       "Season generously with salt and pepper.",
       "Heat a splash of oil in the pan.",
-      "Cover with water and simmer.",
       "Fry the onion until soft.",
     ]) {
       const result = validateAgainstTranscript(
@@ -137,5 +135,41 @@ describe("validateAgainstTranscript", () => {
       );
       expect(result.options, step).toHaveLength(0);
     }
+  });
+});
+
+describe("water and the herbs/spices category", () => {
+  it("always grounds water, so a water step keeps the option", () => {
+    const spoken = transcriptStems(TRANSCRIPT);
+    expect(isGrounded("water", spoken)).toBe(true);
+    const result = validateAgainstTranscript(
+      [
+        option(
+          "poached chicken and rice",
+          ["chicken thighs", "rice", "carrots"],
+          ["Bring a pan of water to the boil.", "Simmer the chicken thighs, then cook the rice."],
+        ),
+      ],
+      ["chicken thighs", "rice", "carrots"],
+      TRANSCRIPT,
+    );
+    expect(result.options).toHaveLength(1);
+  });
+
+  it("unlocks salt, pepper and dry spices when herbs and spices are spoken", () => {
+    const spoken = transcriptStems(`${TRANSCRIPT}, and I've got herbs and spices`);
+    for (const item of ["salt", "pepper", "paprika", "cumin", "seasoning"]) {
+      expect(isGrounded(item, spoken), item).toBe(true);
+    }
+    for (const item of ["celery", "onion", "oil", "olive oil", "butter", "stock"]) {
+      expect(isGrounded(item, spoken), item).toBe(false);
+    }
+  });
+
+  it("olive oil alone unlocks oil but not salt or pepper", () => {
+    const spoken = transcriptStems(`${TRANSCRIPT}, plus olive oil`);
+    expect(isGrounded("olive oil", spoken)).toBe(true);
+    expect(isGrounded("salt", spoken)).toBe(false);
+    expect(isGrounded("pepper", spoken)).toBe(false);
   });
 });
