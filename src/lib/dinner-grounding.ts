@@ -212,7 +212,7 @@ const NEGATION_CUE = [
  * contrast ("I don't have garlic but I have onion"). Splits on punctuation and
  * the ordinary spoken joiners.
  */
-function clauses(transcript: string): string[] {
+export function clauses(transcript: string): string[] {
   return transcript
     .toLowerCase()
     .replace(/['\u2019]/g, "")
