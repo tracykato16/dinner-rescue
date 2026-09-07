@@ -184,6 +184,66 @@ const SEASONING_CATEGORY = [
   "nutmeg",
 ];
 
+/**
+ * Words that flip a clause into "I do NOT have this". Conservative and explicit.
+ */
+const NEGATION_CUE = [
+  "no",
+  "not",
+  "none",
+  "dont",
+  "doesnt",
+  "didnt",
+  "havent",
+  "hasnt",
+  "cant",
+  "without",
+  "out",
+  "ran",
+  "missing",
+  "lacking",
+  "finished",
+  "empty",
+  "zero",
+];
+
+/**
+ * Splits a transcript into short clauses so a negation cannot leak past a
+ * contrast ("I don't have garlic but I have onion"). Splits on punctuation and
+ * the ordinary spoken joiners.
+ */
+function clauses(transcript: string): string[] {
+  return transcript
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+(?:but|though|however|although|and|plus|also|except|only)\s+|\s{2,}/)
+    .flatMap((part) => part.split(/\s+/).join(" ").trim())
+    .filter(Boolean);
+}
+
+/**
+ * Stems the user explicitly said they do NOT have. A clause is negated from its
+ * first negation cue onwards, so "no olive oil" negates both words while
+ * "I do have garlic" is untouched.
+ */
+export function negatedStems(transcript: string): Set<string> {
+  const out = new Set<string>();
+  for (const clause of clauses(transcript)) {
+    const ws = clause.split(" ");
+    const cueAt = ws.findIndex((w) => NEGATION_CUE.includes(w));
+    if (cueAt === -1) continue;
+    for (const word of ws.slice(cueAt + 1)) {
+      if (word.length < 3 || NOISE.has(word) || NEGATION_CUE.includes(word)) continue;
+      out.add(stem(word));
+      const aliases = ALIASES[word] ?? ALIASES[stem(word)];
+      if (aliases) for (const a of aliases) out.add(stem(a));
+    }
+  }
+  // Tap water is a deliberate product-level assumption and can never be negated.
+  for (const w of UNIVERSAL) out.delete(stem(w));
+  return out;
+}
+
 /** All meaningful stems present in the raw transcript, plus water. */
 export function transcriptStems(transcript: string): Set<string> {
   const set = new Set<string>();
@@ -195,8 +255,13 @@ export function transcriptStems(transcript: string): Set<string> {
   if (hasSeasoningPermission(transcript)) {
     for (const w of SEASONING_CATEGORY) set.add(stem(w));
   }
+  // Explicit negation always wins over word presence and over broad category
+  // permission ("herbs and spices but no salt").
+  for (const s of negatedStems(transcript)) set.delete(s);
+  for (const w of UNIVERSAL) set.add(stem(w));
   return set;
 }
+
 
 
 /** Content stems of a phrase, with noise/qualifier words dropped. */
