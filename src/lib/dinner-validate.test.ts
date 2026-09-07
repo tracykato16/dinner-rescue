@@ -173,3 +173,56 @@ describe("water and the herbs/spices category", () => {
     expect(isGrounded("pepper", spoken)).toBe(false);
   });
 });
+
+describe("explicit negation", () => {
+  const g = (t: string, item: string) => isGrounded(item, transcriptStems(t));
+
+  it("rejects a food after 'but no ...' while keeping the positives", () => {
+    const t = "I've got chicken, rice and carrots but no garlic";
+    expect(g(t, "chicken")).toBe(true);
+    expect(g(t, "rice")).toBe(true);
+    expect(g(t, "carrots")).toBe(true);
+    expect(g(t, "garlic")).toBe(false);
+  });
+
+  it("handles 'out of' and 'don't have'", () => {
+    expect(g("I've got chicken and rice, but I'm out of milk", "milk")).toBe(false);
+    const t = "I don't have celery, I've got carrots";
+    expect(g(t, "celery")).toBe(false);
+    expect(g(t, "carrots")).toBe(true);
+  });
+
+  it("does not let a negation leak past a contrast", () => {
+    const t = "I've got chicken, no onion, but I do have garlic";
+    expect(g(t, "onion")).toBe(false);
+    expect(g(t, "garlic")).toBe(true);
+    expect(g(t, "chicken")).toBe(true);
+    const t2 = "I don't have garlic but I have onion";
+    expect(g(t2, "onion")).toBe(true);
+    expect(g(t2, "garlic")).toBe(false);
+  });
+
+  it("rejects both foods in 'no garlic and no onion'", () => {
+    const t = "I've got chicken and rice. No garlic and no onion";
+    expect(g(t, "garlic")).toBe(false);
+    expect(g(t, "onion")).toBe(false);
+    expect(g(t, "chicken")).toBe(true);
+  });
+
+  it("does not unlock oil from 'I've got no olive oil'", () => {
+    const t = "I've got chicken and rice, I've got no olive oil";
+    expect(g(t, "oil")).toBe(false);
+    expect(g(t, "olive oil")).toBe(false);
+  });
+
+  it("lets 'no salt' override herbs and spices permission", () => {
+    const t = "I've got chicken and rice. I have herbs and spices but no salt";
+    expect(g(t, "salt")).toBe(false);
+    expect(g(t, "paprika")).toBe(true);
+    expect(g(t, "pepper")).toBe(true);
+  });
+
+  it("keeps water universal even if negated", () => {
+    expect(g("I've got chicken and rice, no water", "water")).toBe(true);
+  });
+});
