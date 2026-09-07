@@ -148,16 +148,14 @@ export function applySpokenUpdate(items: string[], transcript: string): string[]
     addItem(phrase);
   }
 
-  // Negated stems from the whole transcript ("no onion anymore") remove too.
+  // Negation anywhere in the transcript ("no onion anymore") removes as well.
   return out.filter((item) => {
     const k = key(item);
     if (removeKeys.has(k)) return false;
-    const ws = key(item).split(" ");
+    const ws = k.split(" ");
     if (ws.some((w) => removeWords.has(w))) return false;
     if (item === SEASONING_ITEM) return !negated.has("herb") && !negated.has("spice");
-    return !ws.some((w) => !isGrounded(w, transcriptStems(`${transcript} ${w}`)) === false && false)
-      ? !ws.some((w) => negated.has(stemLite(w)))
-      : true;
+    return !ws.some((w) => negated.has(stemLite(w)));
   });
 }
 
