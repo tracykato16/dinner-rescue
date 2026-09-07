@@ -85,9 +85,37 @@ function tokens(clause: string): string[] {
   return clause.split(/\s+/).filter(Boolean);
 }
 
+/** Determiners and quantity words that must never form part of a stored label. */
+const DETERMINERS = new Set([
+  "the",
+  "some",
+  "all",
+  "half",
+  "whole",
+  "much",
+  "many",
+  "little",
+  "bit",
+  "lot",
+  "few",
+  "couple",
+  "rest",
+  "last",
+  "our",
+  "just",
+  "only",
+  "about",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+]);
+
 function contentWords(clause: string): string[] {
   return tokens(clause).filter(
-    (w) => w.length >= 3 && !CHATTER.has(w) && !REMOVAL_CUE.includes(w),
+    (w) =>
+      w.length >= 3 && !CHATTER.has(w) && !DETERMINERS.has(w) && !REMOVAL_CUE.includes(w),
   );
 }
 
