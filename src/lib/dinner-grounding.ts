@@ -215,6 +215,7 @@ const NEGATION_CUE = [
 function clauses(transcript: string): string[] {
   return transcript
     .toLowerCase()
+    .replace(/['\u2019]/g, "")
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+(?:but|though|however|although|and|plus|also|except|only)\s+|\s{2,}/)
     .flatMap((part) => part.split(/\s+/).join(" ").trim())
