@@ -13,6 +13,7 @@ import {
   Square,
   Trash2,
   Users,
+  X,
   Utensils,
 } from "lucide-react";
 
@@ -25,6 +26,7 @@ import type { DinnerOption, DinnerResult, Effort } from "@/lib/dinner-types";
 import { recordFeedback, recordSelection, recordSession } from "@/lib/tester-store";
 import { clearDraft, readDraft, writeDraft } from "@/lib/draft-store";
 import { useKitchenRecorder } from "@/hooks/useKitchenRecorder";
+import { detectFoodsInPhotos } from "@/lib/vision.functions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -67,6 +69,10 @@ function DinnerRescue() {
   const [step, setStep] = useState<Step>("welcome");
   const [raw, setRaw] = useState("");
   const [extra, setExtra] = useState("");
+  const [photoItems, setPhotoItems] = useState<string[]>([]);
+  const [photoCount, setPhotoCount] = useState(0);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
   const [people, setPeople] = useState("2");
   const [effort, setEffort] = useState<Effort>("normal");
   const [avoid, setAvoid] = useState("");
@@ -87,8 +93,10 @@ function DinnerRescue() {
   useEffect(() => {
     const draft = readDraft();
     setHydrated(true);
-    if (!draft.raw.trim()) return;
+    setPhotoItems(draft.photoItems ?? []);
+    if (!draft.raw.trim() && (draft.photoItems ?? []).length === 0) return;
     setRaw(draft.raw);
+    setPhotoItems(draft.photoItems ?? []);
     setPeople(draft.people || "2");
     setEffort((draft.effort as Effort) || "normal");
     setAvoid(draft.avoid ?? "");
@@ -99,8 +107,12 @@ function DinnerRescue() {
   // Save continuously — a long spoken list must never vanish.
   useEffect(() => {
     if (!hydrated) return;
-    writeDraft({ raw, removed: [], people, effort, avoid, useUp });
-  }, [hydrated, raw, people, effort, avoid, useUp]);
+    writeDraft({ raw, removed: [], photoItems, people, effort, avoid, useUp });
+  }, [hydrated, raw, photoItems, people, effort, avoid, useUp]);
+
+  // Photos and talking are both just evidence of what's in the kitchen; the
+  // existing grounding layer treats this combined text as the source of truth.
+  const evidence = [raw.trim(), photoItems.join(", ")].filter(Boolean).join(". ");
 
   const appendSpeech = useCallback((text: string) => {
     setRaw((prev) => (prev.trim() ? `${prev.replace(/\s*$/, "")} ${text}` : text));
@@ -123,7 +135,7 @@ function DinnerRescue() {
     setStep("results");
     try {
       const next = await generateDinners({
-        data: { transcript: raw, people, effort, avoid, useUp },
+        data: { transcript: evidence, people, effort, avoid, useUp },
       });
       setResult(next);
     } catch (error) {
@@ -136,7 +148,7 @@ function DinnerRescue() {
     } finally {
       setGenerating(false);
     }
-  }, [raw, people, effort, avoid, useUp]);
+  }, [evidence, people, effort, avoid, useUp]);
 
   function addExtra() {
     const text = extra.trim();
@@ -145,9 +157,40 @@ function DinnerRescue() {
     setExtra("");
   }
 
+  const addPhotos = useCallback(async (files: File[]) => {
+    if (files.length === 0) return;
+    setPhotoError(null);
+    setPhotoBusy(true);
+    try {
+      const images = await Promise.all(files.slice(0, 4).map(shrinkImage));
+      const found = await detectFoodsInPhotos({ data: { images } });
+      setPhotoCount((n) => n + images.length);
+      setPhotoItems((prev) => {
+        const seen = new Set(prev.map((i) => i.toLowerCase()));
+        return [...prev, ...found.items.filter((i) => !seen.has(i.toLowerCase()))];
+      });
+      if (found.items.length === 0) {
+        setPhotoError(
+          "I couldn't clearly make out any food in that. Try a closer, brighter photo — or just tell me.",
+        );
+      }
+    } catch (error) {
+      setPhotoError(
+        error instanceof Error && error.message
+          ? error.message
+          : "I couldn't read that photo. Have another go, or just tell me instead.",
+      );
+    } finally {
+      setPhotoBusy(false);
+    }
+  }, []);
+
   function clearList() {
     setRaw("");
     setExtra("");
+    setPhotoItems([]);
+    setPhotoCount(0);
+    setPhotoError(null);
     setRestored(false);
     setResult(null);
     clearDraft();
@@ -185,7 +228,7 @@ function DinnerRescue() {
         {step === "welcome" && (
           <Welcome
             onStart={start}
-            canResume={restored && raw.trim().length > 1}
+            canResume={restored && evidence.trim().length > 1}
             onResume={() => setStep("choices")}
           />
         )}
@@ -311,33 +354,94 @@ function DinnerRescue() {
               </p>
             )}
 
-            <button
-              type="button"
-              disabled
-              aria-disabled="true"
-              className="mt-6 flex w-full items-center gap-3 rounded-xl border border-dashed border-border bg-muted/60 p-4 text-left opacity-90"
-            >
-              <Camera className="size-5 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0">
-                <span className="block font-medium">Photo my fridge</span>
-                <span className="block text-sm text-muted-foreground">
-                  Coming soon — talking is faster for now
-                </span>
-              </span>
-            </button>
+            {recorder.phase === "idle" && (
+              <section className="mt-6 rounded-xl border border-border bg-card/60 p-4">
+                <h2 className="flex items-center gap-2 text-base font-medium">
+                  <Camera className="size-5 shrink-0 text-primary" aria-hidden /> Photo my fridge
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Snap the fridge, freezer or cupboard — I'll only add food I can clearly see. You
+                  can add a few photos, then talk about anything I've missed.
+                </p>
+
+                <label
+                  htmlFor="fridge-photo"
+                  className="mt-3 flex min-h-14 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-primary bg-card px-4 text-base font-medium text-primary"
+                >
+                  {photoBusy ? (
+                    <>
+                      <Loader2 className="size-5 animate-spin" aria-hidden /> Looking at your photo…
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="size-5" aria-hidden />
+                      {photoCount > 0 ? "Add another photo" : "Take or choose a photo"}
+                    </>
+                  )}
+                </label>
+                <input
+                  id="fridge-photo"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  capture="environment"
+                  className="sr-only"
+                  disabled={photoBusy}
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? []);
+                    e.target.value = "";
+                    void addPhotos(files);
+                  }}
+                />
+
+                {photoError && (
+                  <p role="alert" className="mt-3 text-sm font-medium text-destructive">
+                    {photoError}
+                  </p>
+                )}
+
+                {photoItems.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-sm font-medium">
+                      From your photos — tap the cross if I got one wrong:
+                    </p>
+                    <ul className="mt-2 flex flex-wrap gap-2">
+                      {photoItems.map((item) => (
+                        <li key={item}>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPhotoItems((prev) => prev.filter((i) => i !== item))
+                            }
+                            aria-label={`Remove ${item}`}
+                            className="inline-flex min-h-11 items-center gap-2 rounded-full bg-secondary px-3 text-sm text-secondary-foreground"
+                          >
+                            <span className="first-letter:uppercase">{item}</span>
+                            <X className="size-4 shrink-0" aria-hidden />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Missed something? Just talk or type it below — no need to check every item.
+                    </p>
+                  </div>
+                )}
+              </section>
+            )}
 
             {recorder.phase === "idle" && (
               <Button
                 variant="hero"
                 size="xl"
                 className="mt-6 w-full"
-                disabled={raw.trim().length < 2}
+                disabled={evidence.trim().length < 2}
                 onClick={finishTalking}
               >
                 <Check aria-hidden /> Done — that's everything
               </Button>
             )}
-            {raw.trim().length < 2 && recorder.phase === "idle" && (
+            {evidence.trim().length < 2 && recorder.phase === "idle" && (
               <p className="mt-2 text-center text-sm text-muted-foreground">
                 Tell me at least one thing you've got.
               </p>
@@ -439,7 +543,7 @@ function DinnerRescue() {
               variant="hero"
               size="xl"
               className="mt-7 w-full"
-              disabled={raw.trim().length < 2 || generating}
+              disabled={evidence.trim().length < 2 || generating}
               onClick={rescue}
             >
               {generating ? (
@@ -655,6 +759,23 @@ function DinnerRescue() {
       <PrototypeFooter />
     </div>
   );
+}
+
+/**
+ * Shrinks a photo in the browser before it travels: long edge 1024px, JPEG.
+ * Plenty for recognising food, and keeps the upload quick on mobile data.
+ */
+async function shrinkImage(file: File): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 1024 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("I couldn't read that photo on this device.");
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  return canvas.toDataURL("image/jpeg", 0.72);
 }
 
 function formatClock(seconds: number) {

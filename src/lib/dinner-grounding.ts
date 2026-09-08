@@ -105,7 +105,9 @@ const ALIASES: Record<string, string[]> = {
   yogurt: ["yoghurt", "yogurt", "greek"],
   chilli: ["chili", "chilli", "chile"],
   chili: ["chilli", "chili"],
-  capsicum: ["capsicum", "pepper"],
+  // Australian usage: "pepper" is the seasoning, never the vegetable. Only an
+  // explicit "bell pepper" is treated as capsicum (handled in transcriptStems).
+  capsicum: ["capsicum"],
   aubergine: ["eggplant", "aubergine"],
   eggplant: ["eggplant", "aubergine"],
   courgette: ["zucchini", "courgette"],
@@ -253,6 +255,17 @@ export function transcriptStems(transcript: string): Set<string> {
     set.add(stem(word));
   }
   for (const w of UNIVERSAL) set.add(stem(w));
+
+  // Australian terminology safety. "Bell pepper" is the only wording that
+  // grounds capsicum; plain "pepper" is the seasoning and must never do so.
+  // Conversely, if the ONLY mention of pepper is inside "bell pepper", the
+  // seasoning is not grounded either.
+  const lower = transcript.toLowerCase();
+  const bellPeppers = (lower.match(/\bbell\s+peppers?\b/g) ?? []).length;
+  const peppers = (lower.match(/\bpeppers?\b/g) ?? []).length;
+  if (bellPeppers > 0) set.add(stem("capsicum"));
+  if (peppers > 0 && peppers === bellPeppers) set.delete(stem("pepper"));
+
   if (hasSeasoningPermission(transcript)) {
     for (const w of SEASONING_CATEGORY) set.add(stem(w));
   }

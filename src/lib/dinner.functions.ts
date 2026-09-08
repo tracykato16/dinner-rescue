@@ -9,7 +9,11 @@ If the transcript explicitly mentions a broad category such as "herbs and spices
 If no cooking fat was supplied, choose techniques that don't need one rather than sneaking oil or butter in.
 Extract only foods explicitly stated as available. Create up to 3 appetising, coherent dinner ideas using only those foods (plus water, plus seasoning if that category was spoken). Think like a good home cook and use the supplied flavour ingredients intelligently — for example Greek yoghurt, garlic and mustard with chicken. Prefer combinations a real person would be pleased to eat. It is better to return one excellent option, or none, than three poor ones. Never suggest shopping, missing ingredients, substitutions, pantry staples, optional garnishes or "if you have" additions. If there is not enough to make a decent meal, say so and ask the user to tell you anything they forgot.
 
-The transcript is messy conversational Australian English: fillers ("um", "I've got", "a little bit of"), pauses, corrections and conjunctions. Treat conjunctions and pauses as separators between distinct foods — "half an avocado and Weet-Bix, Greek yoghurt, garlic" is four separate foods.
+The transcript is messy conversational Australian English: fillers ("um", "I've got", "a little bit of"), pauses, corrections and conjunctions. Treat conjunctions and pauses as separators between distinct foods — "half an avocado and Weet-Bix, Greek yoghurt, garlic" is four separate foods. It may also contain a line listing foods read from photos of the user's fridge, freezer or pantry; treat those exactly like foods the user spoke. Respect anything the user says they do NOT have ("no garlic", "out of onion") even if it appears elsewhere.
+
+Australian terminology matters: "capsicum" is the vegetable, and plain "pepper" always means the seasoning, never capsicum. Only call it capsicum if the user said capsicum or bell pepper.
+
+Every option must be a dinner a real person would actually choose to eat, not merely a technically possible combination. Quantities must scale sensibly to the number of people — a genuine per-person amount, not the same amount for 1 as for 5.
 
 Write Australian English. Instructions must be numbered plain steps a tired person can follow, with quantities scaled to the number of people.`;
 
