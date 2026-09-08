@@ -5,6 +5,8 @@ const KEY = "dinner-rescue-draft-v1";
 export type Draft = {
   raw: string;
   removed: string[];
+  /** Foods read from fridge/pantry photos, kept alongside the spoken list. */
+  photoItems: string[];
   people: string;
   effort: string;
   avoid: string;
@@ -14,6 +16,7 @@ export type Draft = {
 export const EMPTY_DRAFT: Draft = {
   raw: "",
   removed: [],
+  photoItems: [],
   people: "2",
   effort: "normal",
   avoid: "",
