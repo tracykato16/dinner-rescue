@@ -232,6 +232,20 @@ const VAGUE_PROSE = [
   /\bseasoning\b/i,
 ];
 
+/**
+ * True when every content word of an item is a named dry seasoning (or seasoning
+ * descriptor) that broad herbs/spices permission may unlock. Used so a validly
+ * chosen "smoked paprika" doesn't need to appear in the extracted inventory.
+ */
+export function isSeasoningItem(item: string): boolean {
+  const stems = words(item)
+    .filter((w) => w.length >= 3 && !NOISE.has(w))
+    .map(stem);
+  if (stems.length === 0) return false;
+  const allowed = new Set(SEASONING_CATEGORY.map(stem));
+  return stems.every((s) => allowed.has(s));
+}
+
 /** True when an ingredient name is too vague to be a usable seasoning. */
 export function isVagueSeasoningName(item: string): boolean {
   return VAGUE_INGREDIENT.test(item.trim());
