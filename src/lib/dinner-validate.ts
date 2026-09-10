@@ -6,7 +6,15 @@
 // validated against that grounded list only.
 
 import type { DinnerOption } from "./dinner-types";
-import { groundInventory, isGrounded, transcriptStems } from "./dinner-grounding";
+import {
+  groundInventory,
+  hasVagueSeasoningProse,
+  isGrounded,
+  isVagueQuantity,
+  isVagueSeasoningName,
+  transcriptStems,
+} from "./dinner-grounding";
+
 
 /**
  * Common food words that models habitually slip into instructions ("season with
