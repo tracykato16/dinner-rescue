@@ -200,9 +200,6 @@ const SEASONING_CATEGORY = [
   "allspice",
   "garam",
   "masala",
-  "mustard",
-  "onion",
-  "garlic",
   // Descriptors used in specific seasoning names ("smoked paprika", "ground
   // cumin", "black pepper", "chilli flakes", "mustard powder").
   "smoked",
