@@ -6,7 +6,16 @@
 // validated against that grounded list only.
 
 import type { DinnerOption } from "./dinner-types";
-import { groundInventory, isGrounded, transcriptStems } from "./dinner-grounding";
+import {
+  groundInventory,
+  hasVagueSeasoningProse,
+  isGrounded,
+  isSeasoningItem,
+  isVagueQuantity,
+  isVagueSeasoningName,
+  transcriptStems,
+} from "./dinner-grounding";
+
 
 /**
  * Common food words that models habitually slip into instructions ("season with
@@ -96,14 +105,20 @@ export function validateAgainstTranscript(
     if (option.ingredients.length === 0 || option.steps.length === 0) return false;
 
     for (const ing of option.ingredients) {
+      // Vague seasoning names ("herbs", "mixed spices", "seasoning") are never
+      // usable: the user must be told WHICH herb or spice and how much.
+      if (isVagueSeasoningName(ing.item)) return false;
+      if (isVagueQuantity(ing.quantity)) return false;
       if (!isGrounded(ing.item, spoken)) return false;
-      // Belt and braces: also require overlap with the grounded inventory.
+      // Belt and braces: also require overlap with the grounded inventory,
+      // except for specifically named dry seasonings unlocked by a broad
+      // "herbs and spices" permission.
       const overlaps = ing.item
         .toLowerCase()
         .replace(/[^a-z\s]/g, " ")
         .split(/\s+/)
         .some((w) => w.length > 2 && inventoryStems.has(w));
-      if (!overlaps) return false;
+      if (!overlaps && !isSeasoningItem(ing.item)) return false;
     }
 
     // Steps must not introduce food the user never mentioned.
@@ -111,8 +126,12 @@ export function validateAgainstTranscript(
     const smuggled = STEP_FOOD_WORDS.some(
       (word) => new RegExp(`\\b${word}\\b`).test(prose) && !isGrounded(word, spoken),
     );
-    return !smuggled;
+    if (smuggled) return false;
+
+    // Nor may the prose fall back on vague seasoning wording.
+    return !hasVagueSeasoningProse(`${prose} ${option.description}`.toLowerCase());
   });
+
 
   return { inventory, options: keep, rejectedInventory };
 }

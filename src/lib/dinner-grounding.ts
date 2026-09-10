@@ -184,7 +184,85 @@ const SEASONING_CATEGORY = [
   "chili",
   "bay",
   "nutmeg",
+  // Named dry seasonings the AI may sensibly CHOOSE under broad permission. The
+  // recipe must name one of these specifically — vague "herbs"/"spices" wording
+  // is rejected by the validator.
+  "basil",
+  "parsley",
+  "sage",
+  "dill",
+  "marjoram",
+  "tarragon",
+  "cayenne",
+  "fennel",
+  "cardamom",
+  "clove",
+  "allspice",
+  "garam",
+  "masala",
+  // Descriptors used in specific seasoning names ("smoked paprika", "ground
+  // cumin", "black pepper", "chilli flakes", "mustard powder").
+  "smoked",
+  "ground",
+  "black",
+  "white",
+  "powder",
+  "flake",
+  "seed",
 ];
+
+/**
+ * Wording that is too vague to appear in a finished recipe. Broad "herbs and
+ * spices" permission lets the AI CHOOSE specific dry seasonings; it must never
+ * hand the user an unnamed one.
+ */
+const VAGUE_INGREDIENT =
+  /^(?:(?:mixed|dried|italian|assorted|various|your|the|some|a|an|of|and|ground)\s+)*(?:herbs?|spices?|seasonings?|seasoning\s+mix|herbs?\s+and\s+spices?|spice\s+mix|mixed\s+herbs?)\s*$/i;
+
+const VAGUE_QUANTITY = /\b(?:to taste|as needed|as desired|as required|a sprinkle|a scattering)\b/i;
+
+const VAGUE_PROSE = [
+  /\bseason(?:ing)?\s+to\s+taste\b/i,
+  /\bto\s+taste\b/i,
+  /\b(?:sprinkle|pinch|dash|scattering|handful)\s+of\s+(?:mixed\s+|dried\s+|your\s+)?(?:herbs?|spices?|seasoning)\b/i,
+  /\bherbs?\s+and\s+spices?\b/i,
+  /\bmixed\s+herbs?\b/i,
+  /\byour\s+(?:herbs?|spices?|seasoning)\b/i,
+  /\b(?:some|any)\s+(?:herbs?|spices?|seasoning)\b/i,
+  /\bseasoning\b/i,
+];
+
+/**
+ * True when every content word of an item is a named dry seasoning (or seasoning
+ * descriptor) that broad herbs/spices permission may unlock. Used so a validly
+ * chosen "smoked paprika" doesn't need to appear in the extracted inventory.
+ */
+export function isSeasoningItem(item: string): boolean {
+  const stems = words(item)
+    .filter((w) => w.length >= 3 && !NOISE.has(w))
+    .map(stem);
+  if (stems.length === 0) return false;
+  const allowed = new Set(SEASONING_CATEGORY.map(stem));
+  return stems.every((s) => allowed.has(s));
+}
+
+/** True when an ingredient name is too vague to be a usable seasoning. */
+export function isVagueSeasoningName(item: string): boolean {
+  return VAGUE_INGREDIENT.test(item.trim());
+}
+
+/** True when a quantity string fails to tell the user how much to use. */
+export function isVagueQuantity(quantity: string): boolean {
+  const q = quantity.trim();
+  if (q.length === 0) return true;
+  return VAGUE_QUANTITY.test(q);
+}
+
+/** True when recipe prose leans on vague seasoning wording. */
+export function hasVagueSeasoningProse(prose: string): boolean {
+  return VAGUE_PROSE.some((re) => re.test(prose));
+}
+
 
 /**
  * Words that flip a clause into "I do NOT have this". Conservative and explicit.
