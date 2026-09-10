@@ -10,6 +10,7 @@ import {
   groundInventory,
   hasVagueSeasoningProse,
   isGrounded,
+  isSeasoningItem,
   isVagueQuantity,
   isVagueSeasoningName,
   transcriptStems,
